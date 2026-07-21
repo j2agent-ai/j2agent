@@ -808,66 +808,6 @@ public class ChatContextItemExample {
             return (Criteria) this;
         }
 
-        public Criteria andTokenCountIsNull() {
-            addCriterion("token_count is null");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountIsNotNull() {
-            addCriterion("token_count is not null");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountEqualTo(Integer value) {
-            addCriterion("token_count =", value, "tokenCount");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountNotEqualTo(Integer value) {
-            addCriterion("token_count <>", value, "tokenCount");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountGreaterThan(Integer value) {
-            addCriterion("token_count >", value, "tokenCount");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountGreaterThanOrEqualTo(Integer value) {
-            addCriterion("token_count >=", value, "tokenCount");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountLessThan(Integer value) {
-            addCriterion("token_count <", value, "tokenCount");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountLessThanOrEqualTo(Integer value) {
-            addCriterion("token_count <=", value, "tokenCount");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountIn(List<Integer> values) {
-            addCriterion("token_count in", values, "tokenCount");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountNotIn(List<Integer> values) {
-            addCriterion("token_count not in", values, "tokenCount");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountBetween(Integer value1, Integer value2) {
-            addCriterion("token_count between", value1, value2, "tokenCount");
-            return (Criteria) this;
-        }
-
-        public Criteria andTokenCountNotBetween(Integer value1, Integer value2) {
-            addCriterion("token_count not between", value1, value2, "tokenCount");
-            return (Criteria) this;
-        }
-
         public Criteria andMetaJsonIsNull() {
             addCriterion("meta_json is null");
             return (Criteria) this;

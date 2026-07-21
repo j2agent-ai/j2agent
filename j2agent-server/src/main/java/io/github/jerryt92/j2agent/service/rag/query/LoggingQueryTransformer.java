@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.service.rag.query;
 
 import io.github.jerryt92.j2agent.logging.rag.QueryTransformAgentRunLog;
+import io.github.jerryt92.j2agent.service.llm.LlmCallContext;
 import io.github.jerryt92.j2agent.service.llm.PromptConversationIdExtractor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.rag.Query;
@@ -25,7 +26,8 @@ public final class LoggingQueryTransformer implements QueryTransformer {
     @Override
     public Query transform(Query query) {
         String before = QueryTransformLogSupport.queryText(query);
-        Query result = delegate.transform(query);
+        String conversationId = PromptConversationIdExtractor.extract(query);
+        Query result = LlmCallContext.withConversationId(conversationId, () -> delegate.transform(query));
         String after = QueryTransformLogSupport.queryText(result);
         if (Objects.equals(before, after)) {
             String preview = QueryTransformLogSupport.preview(after);

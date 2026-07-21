@@ -298,7 +298,7 @@ public class UniversalIntentQueryService {
             Prompt prompt = new Prompt(List.of(
                     new SystemMessage(INTENT_QUERY_SYSTEM_PROMPT),
                     new UserMessage(userBlock)));
-            String raw = llmSyncService.callAssistantText(prompt);
+            String raw = llmSyncService.callAssistantText(prompt, conversationId);
             if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
                 throw new TurnCancelledException(turnId);
             }

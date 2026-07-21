@@ -152,7 +152,8 @@ public class UniversalAssistantOrchestratorService {
             }
             boolean forceComplete = round >= MAX_ORCHESTRATION_ROUNDS - 1;
             UniversalOrchestrationDecisionService.OrchestrationDecision decision = orchestrationDecisionService.decide(
-                    candidates, routingQuery, trace, invokedAgentIds, forceComplete, request.turnId());
+                    candidates, routingQuery, trace, invokedAgentIds, forceComplete, request.turnId(),
+                    request.parentConversationId());
             if (decision.isComplete()) {
                 break;
             }

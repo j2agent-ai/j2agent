@@ -4,6 +4,7 @@ import io.github.jerryt92.j2agent.logging.rag.QueryTransformAgentRunLog;
 import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
 import io.github.jerryt92.j2agent.service.file.oss.ChatAttachmentService;
 import io.github.jerryt92.j2agent.service.llm.LlmSyncService;
+import io.github.jerryt92.j2agent.service.llm.PromptConversationIdExtractor;
 import io.github.jerryt92.j2agent.service.llm.memory.ChatMemoryMessageCodec;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -74,7 +75,7 @@ public final class MultimodalQueryTransformer implements QueryTransformer {
         QueryTransformAgentRunLog.info(query, "multimodal",
                 "action=visionInvoke,userText=" + userTextPreview + ",imageCount=" + media.size(),
                 "invoking vision model for query transform");
-        String enriched = enrichWithVision(userText, media);
+        String enriched = enrichWithVision(userText, media, PromptConversationIdExtractor.extract(query));
         if (!StringUtils.hasText(enriched)) {
             if (StringUtils.hasText(userText)) {
                 log.warn("query transform [multimodal]: vision model returned no retrieval text, fallback to user text");
@@ -121,10 +122,10 @@ public final class MultimodalQueryTransformer implements QueryTransformer {
         }
     }
 
-    private String enrichWithVision(String userText, List<Media> media) {
+    private String enrichWithVision(String userText, List<Media> media, String conversationId) {
         String promptText = promptTemplate.render(Map.of(
                 "userText", StringUtils.hasText(userText) ? userText : "（无）"));
-        return llmSyncService.callUserMultimodal(promptText, media, VISION_MAX_TOKENS);
+        return llmSyncService.callUserMultimodal(promptText, media, VISION_MAX_TOKENS, conversationId);
     }
 
     public static final class Builder {

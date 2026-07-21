@@ -80,7 +80,8 @@ public final class LlmBackedChatModelFactory {
             apiBuilder.completionsPath(completionsPath);
         }
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
-                .model(cfg.getModelName());
+                .model(cfg.getModelName())
+                .streamUsage(true);
         if (cfg.getTemperature() != null) {
             optionsBuilder.temperature(cfg.getTemperature());
         }
@@ -104,7 +105,8 @@ public final class LlmBackedChatModelFactory {
                 .completionsPath(completionsPath)
                 .webClientBuilder(LlmReactiveHttpClientFactory.createWebClientBuilder("llm-lm-studio"));
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
-                .model(cfg.getModelName());
+                .model(cfg.getModelName())
+                .streamUsage(true);
         if (cfg.getTemperature() != null) {
             optionsBuilder.temperature(cfg.getTemperature());
         }

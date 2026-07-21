@@ -115,7 +115,7 @@ public class ApiProviderConfigPo {
      * @mbg.generated
      */
     public void setId(String id) {
-        this.id = id;
+        this.id = id == null ? null : id.trim();
     }
 
     /**

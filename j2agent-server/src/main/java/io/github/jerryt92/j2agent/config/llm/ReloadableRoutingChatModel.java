@@ -7,6 +7,9 @@ import io.github.jerryt92.j2agent.service.llm.agent.inf.constant.AgentThinkingOv
 import io.github.jerryt92.j2agent.service.llm.reasoning.AssistantMessageReasoningExtractor;
 import io.github.jerryt92.j2agent.config.provider.ActiveProviderHolder;
 import io.github.jerryt92.j2agent.config.provider.LlmActiveConfig;
+import io.github.jerryt92.j2agent.service.llm.usage.LlmUsageCapturingChatModel;
+import io.github.jerryt92.j2agent.service.llm.usage.LlmUsageExtractor;
+import io.github.jerryt92.j2agent.service.llm.usage.LlmUsageRecorder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -31,10 +34,16 @@ public class ReloadableRoutingChatModel implements ChatModel {
     private static final int EMPTY_STREAM_MAX_RETRIES = 3;
 
     private final ActiveProviderHolder activeProviderHolder;
+    private final LlmUsageExtractor usageExtractor;
+    private final LlmUsageRecorder usageRecorder;
     private final AtomicReference<ChatModel> delegate = new AtomicReference<>();
 
-    public ReloadableRoutingChatModel(ActiveProviderHolder activeProviderHolder) {
+    public ReloadableRoutingChatModel(ActiveProviderHolder activeProviderHolder,
+                                      LlmUsageExtractor usageExtractor,
+                                      LlmUsageRecorder usageRecorder) {
         this.activeProviderHolder = activeProviderHolder;
+        this.usageExtractor = usageExtractor;
+        this.usageRecorder = usageRecorder;
         reload();
     }
 
@@ -45,7 +54,7 @@ public class ReloadableRoutingChatModel implements ChatModel {
     public synchronized void reload() {
         LlmActiveConfig cfg = activeProviderHolder.getActiveLlm();
         try {
-            ChatModel next = LlmBackedChatModelFactory.build(cfg);
+            ChatModel next = wrap(LlmBackedChatModelFactory.build(cfg));
             delegate.set(next);
             log.info("ChatModel reloaded: provider={}, model={}",
                     cfg == null ? "none" : cfg.getProviderType(),
@@ -147,9 +156,18 @@ public class ReloadableRoutingChatModel implements ChatModel {
         AgentThinkingOverride effective = resolveEffectiveOverride(prompt, explicitOverride);
         if (effective != null && effective.overridesProvider()) {
             LlmActiveConfig cfg = activeProviderHolder.getActiveLlm();
-            return LlmBackedChatModelFactory.build(cfg, effective);
+            return wrap(LlmBackedChatModelFactory.build(cfg, effective));
         }
         return requireDelegate();
+    }
+
+    private ChatModel wrap(ChatModel chatModel) {
+        return new LlmUsageCapturingChatModel(
+                chatModel,
+                activeProviderHolder::getActiveLlm,
+                usageExtractor,
+                usageRecorder,
+                "CHAT");
     }
 
     /**

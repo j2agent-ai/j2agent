@@ -161,7 +161,6 @@ public class CompositeKeyChatMemoryRepository implements ChatMemoryRepository {
                     row.ragInfos(),
                     now,
                     messageId,
-                    null,
                     row.metaJson()
             );
             nextIndex++;

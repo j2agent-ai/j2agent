@@ -34,7 +34,6 @@ CREATE TABLE chat_context_item
     feedback          int,
     rag_infos         text,
     add_time          bigint       NOT NULL,
-    token_count       int          NULL,
     meta_json         text         NULL,
     PRIMARY KEY (message_id)
 );
@@ -42,6 +41,37 @@ CREATE TABLE chat_context_item
 CREATE INDEX idx_chat_context_item_ctx_agent ON chat_context_item (context_id, agent_id);
 CREATE INDEX idx_chat_context_item_ctx_agent_msg_idx ON chat_context_item (context_id, agent_id, message_index);
 CREATE INDEX idx_chat_context_item_add_time ON chat_context_item (context_id, agent_id, add_time);
+
+DROP TABLE IF EXISTS llm_usage_record;
+CREATE TABLE llm_usage_record
+(
+    id                      varchar(32)   NOT NULL,
+    user_id                 varchar(64)   NULL,
+    context_id              varchar(64)   NULL,
+    agent_id                varchar(64)   NULL,
+    turn_id                 varchar(64)   NULL,
+    call_seq                int           NULL,
+    call_kind               varchar(32)   NOT NULL,
+    provider_type           varchar(64)   NULL,
+    model_name              varchar(128)  NULL,
+    input_tokens            int           NULL,
+    output_tokens           int           NULL,
+    total_tokens            int           NULL,
+    billable_token_count    int           NULL,
+    cached_input_tokens     int           NULL,
+    cache_read_input_tokens int           NULL,
+    cache_creation_input_tokens int       NULL,
+    reasoning_output_tokens int           NULL,
+    audio_input_tokens      int           NULL,
+    audio_output_tokens     int           NULL,
+    usage_status            varchar(32)   NOT NULL,
+    native_usage_json       text          NULL,
+    error_message           text          NULL,
+    create_time             bigint        NOT NULL,
+    PRIMARY KEY (id)
+);
+
+CREATE INDEX idx_llm_usage_turn ON llm_usage_record (user_id, context_id, agent_id, turn_id, call_seq);
 
 DROP TABLE IF EXISTS app_user;
 CREATE TABLE app_user

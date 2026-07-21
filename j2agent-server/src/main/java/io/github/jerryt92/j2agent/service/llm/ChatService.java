@@ -28,6 +28,8 @@ import io.github.jerryt92.j2agent.logging.llm.AgentRunLogger;
 import io.github.jerryt92.j2agent.service.llm.rag.TurnRagSourceRegistry;
 import io.github.jerryt92.j2agent.service.question.TurnAskQuestionRegistry;
 import io.github.jerryt92.j2agent.service.llm.tool.ToolEventEmitter;
+import io.github.jerryt92.j2agent.service.llm.usage.TurnUsageAccumulator;
+import io.github.jerryt92.j2agent.service.llm.usage.TurnUsageContext;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnLifecycle;
 import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
@@ -168,6 +170,12 @@ public class ChatService {
             };
             final String turnConversationId = buildConversationId(userId, contextId, resolvedAgentId);
             StreamedAssistantPersistence.enable(turnConversationId);
+            TurnUsageAccumulator.bind(new TurnUsageContext(
+                    contextId,
+                    resolvedAgentId,
+                    turnId,
+                    turnConversationId,
+                    userId));
             conversationIdRef.set(turnConversationId);
             final AgentRunLogSnapshot runLogSnapshot = new AgentRunLogSnapshot(
                     contextId,
@@ -299,6 +307,7 @@ public class ChatService {
                                 streamedReasoning, streamedTextLock, streamedAssistantFlushed, false);
                     } finally {
                         StreamedAssistantPersistence.disable(turnConversationId);
+                        TurnUsageAccumulator.clear(turnConversationId);
                         TurnRagSourceRegistry.clear(turnConversationId);
                         TurnAskQuestionRegistry.clear(turnConversationId);
                         SubAgentStreamBridge.unbind(turnId);
@@ -351,6 +360,7 @@ public class ChatService {
                             persistStreamedAssistant(agentChatMemory, turnConversationId, streamedContent,
                                     streamedReasoning, streamedTextLock, streamedAssistantFlushed, true);
                             StreamedAssistantPersistence.disable(turnConversationId);
+                            TurnUsageAccumulator.clear(turnConversationId);
                             TurnRagSourceRegistry.clear(turnConversationId);
                             TurnAskQuestionRegistry.clear(turnConversationId);
                             SubAgentStreamBridge.unbind(turnId);
@@ -370,6 +380,7 @@ public class ChatService {
                     persistStreamedAssistant(agentChatMemory, turnConversationId, streamedContent,
                             streamedReasoning, streamedTextLock, streamedAssistantFlushed, true);
                     StreamedAssistantPersistence.disable(turnConversationId);
+                    TurnUsageAccumulator.clear(turnConversationId);
                     TurnRagSourceRegistry.clear(turnConversationId);
                     TurnAskQuestionRegistry.clear(turnConversationId);
                     SubAgentStreamBridge.unbind(turnId);
@@ -503,6 +514,7 @@ public class ChatService {
             if (failedConversationId != null) {
                 ThinkingOverrideRegistry.unbind(failedConversationId);
                 StreamedAssistantPersistence.disable(failedConversationId);
+                TurnUsageAccumulator.clear(failedConversationId);
                 TurnRagSourceRegistry.clear(failedConversationId);
                 TurnAskQuestionRegistry.clear(failedConversationId);
                 SubAgentStreamBridge.unbind(turnId);

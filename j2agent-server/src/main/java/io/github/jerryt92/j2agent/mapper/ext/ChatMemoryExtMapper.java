@@ -26,9 +26,9 @@ public interface ChatMemoryExtMapper {
 
     @Insert("""
             insert into chat_context_item
-            (message_id, context_id, agent_id, message_index, chat_role, content, feedback, rag_infos, add_time, token_count, meta_json)
+            (message_id, context_id, agent_id, message_index, chat_role, content, feedback, rag_infos, add_time, meta_json)
             values
-            (#{messageId}, #{contextId}, #{agentId}, #{messageIndex}, #{chatRole}, #{content}, #{feedback}, #{ragInfos}, #{addTime}, #{tokenCount}, #{metaJson})
+            (#{messageId}, #{contextId}, #{agentId}, #{messageIndex}, #{chatRole}, #{content}, #{feedback}, #{ragInfos}, #{addTime}, #{metaJson})
             """)
     int insertChatContextItem(@Param("contextId") String contextId,
                               @Param("agentId") String agentId,
@@ -39,7 +39,6 @@ public interface ChatMemoryExtMapper {
                               @Param("ragInfos") String ragInfos,
                               @Param("addTime") long addTime,
                               @Param("messageId") String messageId,
-                              @Param("tokenCount") Integer tokenCount,
                               @Param("metaJson") String metaJson);
 
     @Select("""

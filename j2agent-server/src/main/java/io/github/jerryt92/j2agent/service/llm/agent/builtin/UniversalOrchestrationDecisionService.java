@@ -55,6 +55,17 @@ public class UniversalOrchestrationDecisionService {
             Set<String> invokedAgentIds,
             boolean forceComplete,
             String turnId) {
+        return decide(candidatesJson, routingQuery, trace, invokedAgentIds, forceComplete, turnId, null);
+    }
+
+    public OrchestrationDecision decide(
+            String candidatesJson,
+            String routingQuery,
+            List<OrchestrationTraceEntry> trace,
+            Set<String> invokedAgentIds,
+            boolean forceComplete,
+            String turnId,
+            String conversationId) {
         if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
             throw new TurnCancelledException(turnId);
         }
@@ -89,7 +100,7 @@ public class UniversalOrchestrationDecisionService {
             Prompt prompt = new Prompt(List.of(
                     new SystemMessage(DECISION_SYSTEM_PROMPT),
                     new UserMessage(userBlock)));
-            String raw = llmSyncService.callAssistantText(prompt);
+            String raw = llmSyncService.callAssistantText(prompt, conversationId);
             if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
                 throw new TurnCancelledException(turnId);
             }
