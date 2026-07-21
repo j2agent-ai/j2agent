@@ -2,10 +2,9 @@ package io.github.jerryt92.j2agent.config.storage;
 
 import io.github.jerryt92.j2agent.service.file.oss.ObjectStorageService;
 
-import io.github.jerryt92.j2agent.service.file.oss.provider.MinioObjectStorageService;
-import io.github.jerryt92.j2agent.service.file.oss.provider.OssObjectStorageService;
+import io.github.jerryt92.j2agent.service.file.oss.provider.AliyunOssObjectStorageService;
 import io.github.jerryt92.j2agent.service.file.oss.provider.QiniuObjectStorageService;
-import io.github.jerryt92.j2agent.service.file.oss.provider.R2ObjectStorageService;
+import io.github.jerryt92.j2agent.service.file.oss.provider.S3ObjectStorageService;
 
 import org.junit.jupiter.api.Test;
 
@@ -16,24 +15,24 @@ class ObjectStorageConfigTest {
     private final ObjectStorageConfig config = new ObjectStorageConfig();
 
     @Test
-    void shouldCreateMinioService() {
-        ObjectStorageProperties properties = baseProperties(ObjectStorageProperties.StorageType.MINIO);
+    void shouldCreateS3Service() {
+        ObjectStorageProperties properties = baseProperties(ObjectStorageProperties.StorageType.S3);
         properties.getS3().setEndpoint("http://127.0.0.1:9000");
         properties.getS3().setAccessKeyId("access-key-id");
         properties.getS3().setSecretAccessKey("secret-access-key");
 
-        assertInstanceOf(MinioObjectStorageService.class, config.objectStorageService(properties));
+        assertInstanceOf(S3ObjectStorageService.class, config.objectStorageService(properties));
     }
 
     @Test
     void shouldCreateAliyunOssService() {
-        ObjectStorageProperties properties = baseProperties(ObjectStorageProperties.StorageType.OSS);
-        properties.getOss().setEndpoint("https://oss-cn-hangzhou.aliyuncs.com");
-        properties.getOss().setAccessKeyId("access-key");
-        properties.getOss().setAccessKeySecret("secret-key");
+        ObjectStorageProperties properties = baseProperties(ObjectStorageProperties.StorageType.ALIYUN_OSS);
+        properties.getAliyunOss().setEndpoint("https://oss-cn-hangzhou.aliyuncs.com");
+        properties.getAliyunOss().setAccessKeyId("access-key");
+        properties.getAliyunOss().setAccessKeySecret("secret-key");
 
         ObjectStorageService service = config.objectStorageService(properties);
-        assertInstanceOf(OssObjectStorageService.class, service);
+        assertInstanceOf(AliyunOssObjectStorageService.class, service);
         service.close();
     }
 
@@ -48,18 +47,8 @@ class ObjectStorageConfigTest {
     }
 
     @Test
-    void shouldCreateCloudflareR2Service() {
-        ObjectStorageProperties properties = baseProperties(ObjectStorageProperties.StorageType.R2);
-        properties.getS3().setEndpoint("https://account-id.r2.cloudflarestorage.com");
-        properties.getS3().setAccessKeyId("access-key");
-        properties.getS3().setSecretAccessKey("secret-key");
-
-        assertInstanceOf(R2ObjectStorageService.class, config.objectStorageService(properties));
-    }
-
-    @Test
     void shouldRejectMissingSecretAccessKeyForS3Storage() {
-        ObjectStorageProperties properties = baseProperties(ObjectStorageProperties.StorageType.MINIO);
+        ObjectStorageProperties properties = baseProperties(ObjectStorageProperties.StorageType.S3);
         properties.getS3().setEndpoint("http://127.0.0.1:9000");
         properties.getS3().setAccessKeyId("access-key-id");
 
@@ -68,7 +57,7 @@ class ObjectStorageConfigTest {
 
     @Test
     void shouldRejectIncompleteProviderConfiguration() {
-        ObjectStorageProperties properties = baseProperties(ObjectStorageProperties.StorageType.MINIO);
+        ObjectStorageProperties properties = baseProperties(ObjectStorageProperties.StorageType.S3);
 
         assertThrows(IllegalArgumentException.class, () -> config.objectStorageService(properties));
     }

@@ -23,7 +23,7 @@ docker pull eclipse-temurin:21-jre
 docker pull docker.io/postgres:18.4
 docker pull redis:7.4.2
 docker pull quay.io/coreos/etcd:v3.5.25
-docker pull minio/minio:RELEASE.2024-12-18T13-15-44Z
+docker pull rustfs/rustfs:latest
 docker pull milvusdb/milvus:v2.6.17
 ```
 

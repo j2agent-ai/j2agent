@@ -86,10 +86,10 @@ j2agent:
       endpoint: ${J2AGENT_S3_ENDPOINT:}
       access-key-id: ${J2AGENT_S3_ACCESS_KEY_ID:}
       secret-access-key: ${J2AGENT_S3_SECRET_ACCESS_KEY:}
-    oss:
-      endpoint: ${OSS_ENDPOINT:}
-      access-key-id: ${OSS_ACCESS_KEY_ID:}
-      access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
+    aliyun-oss:
+      endpoint: ${ALIYUN_OSS_ENDPOINT:}
+      access-key-id: ${ALIYUN_OSS_ACCESS_KEY_ID:}
+      access-key-secret: ${ALIYUN_OSS_ACCESS_KEY_SECRET:}
     qiniu:
       access-key: ${QINIU_ACCESS_KEY:}
       secret-key: ${QINIU_SECRET_KEY:}

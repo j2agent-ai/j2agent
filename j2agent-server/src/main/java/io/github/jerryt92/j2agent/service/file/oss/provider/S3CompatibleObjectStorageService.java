@@ -35,7 +35,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * S3 兼容对象存储实现，适用于 MinIO、Cloudflare R2、RustFS 等后端。
+ * S3 兼容对象存储实现。
  */
 public class S3CompatibleObjectStorageService implements ObjectStorageService {
     private final S3Client s3Client;

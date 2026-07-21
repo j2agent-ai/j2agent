@@ -78,9 +78,9 @@ j2agent:
   https:
     redirect-port: ${J2AGENT_HTTP_REDIRECT_PORT:}
   storage:
-    # type 可选 minio、oss（阿里云）、qiniu（七牛云）或 r2（Cloudflare）
+    # type 可选 s3、aliyun-oss（阿里云 OSS）或 qiniu（七牛云）
     enabled: true
-    type: minio
+    type: s3
     bucket: j2agent-files
     # 聊天图片展示：proxy=同源 content 代理；direct=OSS 预签名直链
     chat-attachment-display: ${J2AGENT_CHAT_ATTACHMENT_DISPLAY:proxy}
@@ -107,12 +107,12 @@ j2agent:
         max-delay-seconds: 300
     s3:
       endpoint: http://127.0.0.1:19000
-      access-key-id: minioadmin
+      access-key-id: rustfsadmin
       secret-access-key: j2apassword@2026#
-    oss:
-      endpoint: ${OSS_ENDPOINT:}
-      access-key-id: ${OSS_ACCESS_KEY_ID:}
-      access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
+    aliyun-oss:
+      endpoint: ${ALIYUN_OSS_ENDPOINT:}
+      access-key-id: ${ALIYUN_OSS_ACCESS_KEY_ID:}
+      access-key-secret: ${ALIYUN_OSS_ACCESS_KEY_SECRET:}
     qiniu:
       access-key: ${QINIU_ACCESS_KEY:}
       secret-key: ${QINIU_SECRET_KEY:}

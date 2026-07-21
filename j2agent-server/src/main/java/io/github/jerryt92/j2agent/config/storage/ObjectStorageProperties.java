@@ -14,10 +14,10 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "j2agent.storage")
 public class ObjectStorageProperties {
     private boolean enabled;
-    private StorageType type = StorageType.MINIO;
+    private StorageType type = StorageType.S3;
     private String bucket;
     private S3Compatible s3 = new S3Compatible();
-    private Oss oss = new Oss();
+    private AliyunOss aliyunOss = new AliyunOss();
     private Qiniu qiniu = new Qiniu();
     private Sync sync = new Sync();
     private Upload upload = new Upload();
@@ -37,10 +37,9 @@ public class ObjectStorageProperties {
     }
 
     public enum StorageType {
-        MINIO,
-        OSS,
-        QINIU,
-        R2
+        S3,
+        ALIYUN_OSS,
+        QINIU
     }
 
     @Getter
@@ -53,7 +52,7 @@ public class ObjectStorageProperties {
 
     @Getter
     @Setter
-    public static class Oss {
+    public static class AliyunOss {
         private String endpoint;
         private String accessKeyId;
         private String accessKeySecret;

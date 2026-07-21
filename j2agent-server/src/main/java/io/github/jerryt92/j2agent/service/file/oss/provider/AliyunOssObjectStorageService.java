@@ -27,11 +27,11 @@ import java.util.Map;
 /**
  * 阿里云 OSS 对象存储实现。
  */
-public class OssObjectStorageService implements ObjectStorageService {
+public class AliyunOssObjectStorageService implements ObjectStorageService {
     private final OSS client;
     private final String defaultBucket;
 
-    public OssObjectStorageService(OSS client, String defaultBucket) {
+    public AliyunOssObjectStorageService(OSS client, String defaultBucket) {
         this.client = client;
         this.defaultBucket = ObjectStorageSupport.requireName(defaultBucket, "defaultBucket");
     }

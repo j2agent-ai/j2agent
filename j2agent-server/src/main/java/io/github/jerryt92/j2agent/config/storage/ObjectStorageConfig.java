@@ -1,10 +1,9 @@
 package io.github.jerryt92.j2agent.config.storage;
 
 import io.github.jerryt92.j2agent.service.file.oss.ObjectStorageService;
-import io.github.jerryt92.j2agent.service.file.oss.provider.MinioObjectStorageService;
-import io.github.jerryt92.j2agent.service.file.oss.provider.OssObjectStorageService;
+import io.github.jerryt92.j2agent.service.file.oss.provider.AliyunOssObjectStorageService;
 import io.github.jerryt92.j2agent.service.file.oss.provider.QiniuObjectStorageService;
-import io.github.jerryt92.j2agent.service.file.oss.provider.R2ObjectStorageService;
+import io.github.jerryt92.j2agent.service.file.oss.provider.S3ObjectStorageService;
 
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
@@ -34,29 +33,28 @@ public class ObjectStorageConfig {
     public ObjectStorageService objectStorageService(ObjectStorageProperties properties) {
         requireText(properties.getBucket(), "j2agent.storage.bucket");
         return switch (properties.getType()) {
-            case MINIO -> createMinioService(properties);
-            case OSS -> createOssService(properties);
+            case S3 -> createS3Service(properties);
+            case ALIYUN_OSS -> createAliyunOssService(properties);
             case QINIU -> createQiniuService(properties);
-            case R2 -> createR2Service(properties);
         };
     }
 
-    private ObjectStorageService createMinioService(ObjectStorageProperties properties) {
+    private ObjectStorageService createS3Service(ObjectStorageProperties properties) {
         S3Clients clients = createS3Clients(properties.getS3(), "j2agent.storage.s3");
-        return new MinioObjectStorageService(clients.s3Client(), clients.presigner(), properties.getBucket());
+        return new S3ObjectStorageService(clients.s3Client(), clients.presigner(), properties.getBucket());
     }
 
-    private ObjectStorageService createOssService(ObjectStorageProperties properties) {
-        ObjectStorageProperties.Oss oss = properties.getOss();
-        requireText(oss.getEndpoint(), "j2agent.storage.oss.endpoint");
-        requireText(oss.getAccessKeyId(), "j2agent.storage.oss.access-key-id");
-        requireText(oss.getAccessKeySecret(), "j2agent.storage.oss.access-key-secret");
+    private ObjectStorageService createAliyunOssService(ObjectStorageProperties properties) {
+        ObjectStorageProperties.AliyunOss aliyunOss = properties.getAliyunOss();
+        requireText(aliyunOss.getEndpoint(), "j2agent.storage.aliyun-oss.endpoint");
+        requireText(aliyunOss.getAccessKeyId(), "j2agent.storage.aliyun-oss.access-key-id");
+        requireText(aliyunOss.getAccessKeySecret(), "j2agent.storage.aliyun-oss.access-key-secret");
         OSS client = new OSSClientBuilder().build(
-                oss.getEndpoint(),
-                oss.getAccessKeyId(),
-                oss.getAccessKeySecret()
+                aliyunOss.getEndpoint(),
+                aliyunOss.getAccessKeyId(),
+                aliyunOss.getAccessKeySecret()
         );
-        return new OssObjectStorageService(client, properties.getBucket());
+        return new AliyunOssObjectStorageService(client, properties.getBucket());
     }
 
     private ObjectStorageService createQiniuService(ObjectStorageProperties properties) {
@@ -72,11 +70,6 @@ public class ObjectStorageConfig {
                 properties.getBucket(),
                 new OkHttpClient()
         );
-    }
-
-    private ObjectStorageService createR2Service(ObjectStorageProperties properties) {
-        S3Clients clients = createS3Clients(properties.getS3(), "j2agent.storage.s3");
-        return new R2ObjectStorageService(clients.s3Client(), clients.presigner(), properties.getBucket());
     }
 
     private S3Clients createS3Clients(ObjectStorageProperties.S3Compatible s3, String propertyPrefix) {
