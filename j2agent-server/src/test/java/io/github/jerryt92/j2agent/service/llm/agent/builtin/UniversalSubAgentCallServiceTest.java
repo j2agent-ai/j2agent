@@ -3,6 +3,7 @@ package io.github.jerryt92.j2agent.service.llm.agent.builtin;
 import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
 import io.github.jerryt92.j2agent.model.AgentUiEventEnvelope;
 import io.github.jerryt92.j2agent.model.ChatCallback;
+import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.service.llm.AgentTurnStateMachine;
 import io.github.jerryt92.j2agent.service.llm.ThinkingOverrideRegistry;
 import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamOptions;
@@ -92,7 +93,8 @@ class UniversalSubAgentCallServiceTest {
                 "j2agent-qa-assistant",
                 "查文档",
                 new UniversalSubAgentCallService.SubAgentCallRequest(
-                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null));
+                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null, List.of(),
+                        userContext("zh_CN")));
 
         assertEquals("wiki answer", result);
         AgentRunContext runContext = optionsCaptor.getValue().agentRunContext();
@@ -116,7 +118,8 @@ class UniversalSubAgentCallServiceTest {
                 "j2agent-qa-assistant",
                 "routing",
                 new UniversalSubAgentCallService.SubAgentCallRequest(
-                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null, List.of(attachment)));
+                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null, List.of(attachment),
+                        userContext("zh_CN")));
 
         assertEquals("wiki answer", result);
         assertEquals(1, optionsCaptor.getValue().agentRunContext().attachments().size());
@@ -146,7 +149,8 @@ class UniversalSubAgentCallServiceTest {
                 "j2agent-qa-assistant",
                 "routing",
                 new UniversalSubAgentCallService.SubAgentCallRequest(
-                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null));
+                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null, List.of(),
+                        userContext("zh_CN")));
 
         assertEquals("qa answer", result);
     }
@@ -158,7 +162,8 @@ class UniversalSubAgentCallServiceTest {
                 "missing",
                 "q",
                 new UniversalSubAgentCallService.SubAgentCallRequest(
-                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null));
+                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null, List.of(),
+                        userContext("zh_CN")));
         assertTrue(result.startsWith("Error:"));
     }
 
@@ -169,7 +174,8 @@ class UniversalSubAgentCallServiceTest {
                 "j2agent-qa-assistant",
                 "q",
                 new UniversalSubAgentCallService.SubAgentCallRequest(
-                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null)));
+                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null, List.of(),
+                        userContext("zh_CN"))));
     }
 
     @Test
@@ -190,7 +196,8 @@ class UniversalSubAgentCallServiceTest {
                         "j2agent-qa-assistant",
                         "routing",
                         new UniversalSubAgentCallService.SubAgentCallRequest(
-                                "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null));
+                                "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null, List.of(),
+                                userContext("zh_CN")));
             } catch (TurnCancelledException ignored) {
                 // expected
             }
@@ -246,10 +253,18 @@ class UniversalSubAgentCallServiceTest {
                 "j2agent-qa-assistant",
                 "查文档",
                 new UniversalSubAgentCallService.SubAgentCallRequest(
-                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null));
+                        "ctx-1", "turn-1", "user-1", "user-1:ctx-1:universal_assistant", null, List.of(),
+                        userContext("zh_CN")));
 
         assertEquals("我将回答", result);
         assertEquals("我将回答", streamedContent.toString());
         assertEquals(3, wsDeltaCount.get());
+    }
+
+    private static UserContextBo userContext(String language) {
+        UserContextBo userContext = new UserContextBo();
+        userContext.setUserId("user-1");
+        userContext.setLanguage(language);
+        return userContext;
     }
 }

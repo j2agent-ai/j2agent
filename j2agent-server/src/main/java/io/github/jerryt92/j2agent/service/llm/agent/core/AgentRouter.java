@@ -2,8 +2,10 @@ package io.github.jerryt92.j2agent.service.llm.agent.core;
 
 import io.github.jerryt92.j2agent.model.AgentInfoDto;
 import io.github.jerryt92.j2agent.model.AgentInfoList;
-import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
+import io.github.jerryt92.j2agent.constants.CommonConstants;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
+import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
+import io.github.jerryt92.j2agent.utils.I18nLocaleUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
@@ -69,15 +71,17 @@ public class AgentRouter {
     /**
      * 列出所有已注册智能体（按 sort、agentId 排序），供前端展示卡片。
      */
-    public AgentInfoList listRegisteredAgents() {
+    public AgentInfoList listRegisteredAgents(String language) {
+        String locale = I18nLocaleUtils.normalizeLanguage(language);
         List<AgentInfoDto> items = agents.values().stream()
                 .filter(a -> !UniversalAssistantConstants.isUniversalAssistant(a.getAgentId()))
+                .filter(a -> !UniversalAssistantConstants.isKnowledgeQaAssistant(a.getAgentId()))
                 .sorted(Comparator.comparingInt(AiAgent::getSort)
                         .thenComparing(AiAgent::getAgentId))
                 .map(a -> new AgentInfoDto()
                         .agentId(a.getAgentId())
-                        .name(a.getAgentName())
-                        .description(a.getAgentDescription())
+                        .name(a.resolveAgentName(locale))
+                        .description(a.resolveAgentDescription(locale))
                         .showHotQuestions(a.isQaTemplateEnabled())
                         .sort(a.getSort())
                         .logo(a.getLogo()))
@@ -91,6 +95,7 @@ public class AgentRouter {
     public List<AiAgent> listCallableSubAgents() {
         return agents.values().stream()
                 .filter(a -> !UniversalAssistantConstants.isUniversalAssistant(a.getAgentId()))
+                .filter(a -> !UniversalAssistantConstants.isKnowledgeQaAssistant(a.getAgentId()))
                 .sorted(Comparator.comparingInt(AiAgent::getSort)
                         .thenComparing(AiAgent::getAgentId))
                 .collect(Collectors.toList());
@@ -110,7 +115,7 @@ public class AgentRouter {
         if (agent == null) {
             return agentId;
         }
-        String name = agent.getAgentName();
-        return name != null && !name.isBlank() ? name.trim() : agentId;
+        String name = agent.resolveAgentName(CommonConstants.ZH_CN);
+        return !name.isBlank() ? name.trim() : agentId;
     }
 }

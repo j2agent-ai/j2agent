@@ -11,6 +11,8 @@ public class UserContextBo {
     private String sessionId;
     private String userId;
     private String username;
+    /** 当前会话语言标识（如 zh_CN / en_US）。 */
+    private String language;
     private RoleEnum role;
     private long expireTime;
     /** 预留细粒度权限，当前为空列表。 */

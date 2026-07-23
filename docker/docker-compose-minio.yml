@@ -136,7 +136,6 @@ services:
       - "${J2AGENT_PORT}:${J2AGENT_PORT}"
       - "${J2AGENT_HTTP_REDIRECT_PORT:-${J2AGENT_PORT}}:${J2AGENT_HTTP_REDIRECT_PORT:-${J2AGENT_PORT}}"
     environment:
-      I18N: "${I18N}"
       JWT_SECRET: "${JWT_SECRET}"
       JAVA_OPTS: "${JAVA_OPTS}"
       SPRING_OPTIONS: "${SPRING_OPTIONS} --server.ssl.enabled=${J2AGENT_HTTPS_ENABLED:-false} --server.ssl.certificate=/opt/j2agent/volume/certs/${J2AGENT_HTTPS_CERT_FILE:-j2agent.crt} --server.ssl.certificate-private-key=/opt/j2agent/volume/certs/${J2AGENT_HTTPS_KEY_FILE:-j2agent.key}"

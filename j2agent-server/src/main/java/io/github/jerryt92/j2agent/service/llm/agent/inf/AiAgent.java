@@ -12,6 +12,8 @@ import com.alibaba.cloud.ai.graph.skills.SkillMetadata;
 import com.alibaba.fastjson2.JSONObject;
 import io.github.jerryt92.j2agent.config.plugin.PluginProperties;
 import io.github.jerryt92.j2agent.constants.CommonConstants;
+import io.github.jerryt92.j2agent.model.I18nString;
+import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.service.rag.RagSourceFileService;
 import io.github.jerryt92.j2agent.service.rag.query.DefaultQueryTransformers;
 import io.github.jerryt92.j2agent.service.llm.advisor.EmptyQuerySkippingRetrievalAugmentationAdvisor;
@@ -27,10 +29,13 @@ import io.github.jerryt92.j2agent.service.llm.skill.AgentUiSkillLoadToolIntercep
 import io.github.jerryt92.j2agent.service.llm.tool.AgentToolErrorReturnInterceptor;
 import io.github.jerryt92.j2agent.service.llm.tool.AgentUiToolEventInterceptor;
 import io.github.jerryt92.j2agent.tools.AskQuestionTool;
+import io.github.jerryt92.j2agent.utils.I18nLocaleUtils;
 import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.PromptTemplate;
@@ -73,13 +78,35 @@ public abstract class AiAgent {
 
     public abstract String getAgentId();
 
-    public abstract String getAgentName();
+    public abstract I18nString getAgentName();
 
-    public abstract String getAgentDescription();
+    public abstract I18nString getAgentDescription();
+
+    /** 按 locale 解析智能体展示名称。 */
+    public final String resolveAgentName(String locale) {
+        return resolveI18nString(getAgentName(), locale);
+    }
+
+    /** 按 locale 解析智能体描述。 */
+    public final String resolveAgentDescription(String locale) {
+        return resolveI18nString(getAgentDescription(), locale);
+    }
+
+    private String resolveI18nString(I18nString value, String locale) {
+        if (value == null) {
+            return "";
+        }
+        String resolved = CommonConstants.EN_US.equals(locale) ? value.getEnUS() : value.getZhCN();
+        if (StringUtils.hasText(resolved)) {
+            return resolved.trim();
+        }
+        String fallback = CommonConstants.EN_US.equals(locale) ? value.getZhCN() : value.getEnUS();
+        return StringUtils.hasText(fallback) ? fallback.trim() : "";
+    }
 
     /**
      * 编排提示词：仅供通用助手开放召回等内部编排使用，不展示到界面。
-     * 未 override 或返回空时，{@link #resolveOrchestrationPrompt()} 回退为 {@link #getAgentDescription()}。
+     * 未 override 或返回空时，{@link #resolveOrchestrationPrompt()} 回退为中文 Agent 描述。
      */
     public String getOrchestrationPrompt() {
         return null;
@@ -88,7 +115,7 @@ public abstract class AiAgent {
     /** 路由侧实际使用的编排文案。 */
     public final String resolveOrchestrationPrompt() {
         String orchestration = getOrchestrationPrompt();
-        return StringUtils.hasText(orchestration) ? orchestration.trim() : getAgentDescription();
+        return StringUtils.hasText(orchestration) ? orchestration.trim() : resolveAgentDescription(CommonConstants.ZH_CN);
     }
 
     public abstract String loadSystemPrompt();
@@ -189,6 +216,8 @@ public abstract class AiAgent {
      */
     protected volatile Agent agent;
 
+    private static final ThreadLocal<UserContextBo> CURRENT_USER_CONTEXT = new ThreadLocal<>();
+
     @Autowired
     protected ChatModel chatModel;
 
@@ -258,12 +287,28 @@ public abstract class AiAgent {
         this.agent = buildAgent().build();
     }
 
+    /** 当前流式调用绑定的用户上下文。 */
+    protected final UserContextBo currentUserContext() {
+        return CURRENT_USER_CONTEXT.get();
+    }
+
+    /** 当前流式调用语言（归一化为 zh_CN / en_US）。 */
+    protected final String currentLanguage() {
+        UserContextBo userContext = currentUserContext();
+        return userContext == null ? CommonConstants.ZH_CN : I18nLocaleUtils.normalizeLanguage(userContext.getLanguage());
+    }
+
+    /** 当前流式调用是否为英文。 */
+    protected final boolean currentLanguageIsEnglish() {
+        return CommonConstants.EN_US.equals(currentLanguage());
+    }
+
     /**
      * 以流式方式执行单轮 Agent 调用；会话历史由 ChatClient 上的记忆 Advisor 维护，
      * {@link ChatMemory#CONVERSATION_ID} 放在首条 {@link UserMessage} 的 metadata 中以便跨线程解析。
      */
     public Flux<NodeOutput> stream(AgentRunContext context) throws GraphRunnerException {
-        if (this.agent == null) {
+        if (agent == null) {
             throw new IllegalStateException("Agent not initialized: " + getAgentId());
         }
         RunnableConfig.Builder configBuilder = RunnableConfig.builder()
@@ -279,12 +324,28 @@ public abstract class AiAgent {
         runnableConfig.context().put(AgentRunnableContextKeys.CONTEXT_KEY_TURN_ID, context.turnId());
         runnableConfig.context().put(AgentRunnableContextKeys.CONTEXT_KEY_USER_ID, context.userId());
         runnableConfig.context().put(AgentRunnableContextKeys.CONTEXT_KEY_AGENT_ID, context.agentId());
+        if (context.userContext() != null) {
+            runnableConfig.context().put(AgentRunnableContextKeys.CONTEXT_KEY_USER_CONTEXT, context.userContext());
+        }
+        if (StringUtils.hasText(context.language())) {
+            runnableConfig.context().put(AgentRunnableContextKeys.CONTEXT_KEY_LANGUAGE, context.language());
+        }
+        if (!context.knowledgeCollections().isEmpty()) {
+            runnableConfig.context().put(
+                    AgentRunnableContextKeys.CONTEXT_KEY_KNOWLEDGE_COLLECTIONS,
+                    context.knowledgeCollections());
+        }
         if (context.subAgentCallRun()) {
             runnableConfig.context().put(AgentRunnableContextKeys.CONTEXT_KEY_SUB_AGENT_CALL_RUN, Boolean.TRUE);
         }
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put(ChatMemory.CONVERSATION_ID, context.conversationId());
         metadata.put("attachments", context.attachments());
+        if (!context.knowledgeCollections().isEmpty()) {
+            metadata.put(
+                    AgentRunnableContextKeys.CONTEXT_KEY_KNOWLEDGE_COLLECTIONS,
+                    context.knowledgeCollections());
+        }
         if (context.subAgentCallRun()) {
             metadata.put(ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, Boolean.TRUE);
         }
@@ -302,9 +363,59 @@ public abstract class AiAgent {
             userMessageBuilder.media(attachmentService.toMedia(context.attachments()));
         }
         UserMessage userMessage = userMessageBuilder.build();
-        ReactCompatibleMessageChatMemoryAdvisor.setConversationId(context.conversationId());
-        return agent.stream(List.of(userMessage), runnableConfig)
-                .doFinally(signalType -> ReactCompatibleMessageChatMemoryAdvisor.clear());
+        return Flux.defer(() -> {
+            UserContextBo previousUserContext = CURRENT_USER_CONTEXT.get();
+            bindCurrentUserContext(context.userContext());
+            ReactCompatibleMessageChatMemoryAdvisor.setConversationId(context.conversationId());
+            try {
+                List<Message> messages = new ArrayList<>();
+                String runtimeSystemPrompt = resolveRuntimeSystemPrompt();
+                if (StringUtils.hasText(runtimeSystemPrompt)) {
+                    messages.add(new SystemMessage(runtimeSystemPrompt));
+                }
+                messages.add(userMessage);
+                return agent.stream(messages, runnableConfig)
+                        .doFinally(signalType -> {
+                            restoreCurrentUserContext(previousUserContext);
+                            ReactCompatibleMessageChatMemoryAdvisor.clear();
+                        });
+            } catch (GraphRunnerException ex) {
+                restoreCurrentUserContext(previousUserContext);
+                ReactCompatibleMessageChatMemoryAdvisor.clear();
+                return Flux.error(ex);
+            }
+        });
+    }
+
+    private void bindCurrentUserContext(UserContextBo userContext) {
+        if (userContext == null) {
+            CURRENT_USER_CONTEXT.remove();
+            return;
+        }
+        CURRENT_USER_CONTEXT.set(userContext);
+    }
+
+    private void restoreCurrentUserContext(UserContextBo previousUserContext) {
+        if (previousUserContext == null) {
+            CURRENT_USER_CONTEXT.remove();
+            return;
+        }
+        CURRENT_USER_CONTEXT.set(previousUserContext);
+    }
+
+    private String resolveRuntimeSystemPrompt() {
+        String systemPrompt = loadSystemPrompt();
+        if (!currentLanguageIsEnglish()) {
+            return systemPrompt;
+        }
+        return appendEnglishOutputInstruction(systemPrompt);
+    }
+
+    private String appendEnglishOutputInstruction(String systemPrompt) {
+        if (!StringUtils.hasText(systemPrompt)) {
+            return CommonConstants.ENGLISH_LLM_PROMPT;
+        }
+        return systemPrompt.trim() + "\n\n" + CommonConstants.ENGLISH_LLM_PROMPT;
     }
 
     /**
@@ -571,7 +682,7 @@ public abstract class AiAgent {
                 .name(getAgentId())
                 .chatClient(chatClient)
                 .tools(withoutNullToolCallbacks(buildEffectiveToolCallbacks()))
-                .systemPrompt(loadSystemPrompt())
+                .systemPrompt("")
                 .interceptors(buildEffectiveInterceptors());
         Hook[] effectiveHooks = buildEffectiveHooks();
         if (effectiveHooks.length > 0) {

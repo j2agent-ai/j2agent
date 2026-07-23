@@ -82,6 +82,7 @@
                 <executions>
                     <execution>
                         <id>generate-server</id>
+                        <phase>generate-sources</phase>
                         <goals>
                             <goal>generate</goal>
                         </goals>
@@ -93,7 +94,7 @@
                             <modelPackage>io.github.jerryt92.j2agent.model</modelPackage>
                             <generateApis>false</generateApis>
                             <generateModels>true</generateModels>
-                            <skipIfSpecIsUnchanged>true</skipIfSpecIsUnchanged>
+                            <skipIfSpecIsUnchanged>false</skipIfSpecIsUnchanged>
                             <configOptions>
                                 <configPackage>io.github.jerryt92.j2agent.config</configPackage>
                                 <dateLibrary>java21</dateLibrary>

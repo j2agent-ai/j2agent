@@ -61,7 +61,7 @@ spring:
     baseline-version: 0
     # sql 文件的位置
     # 文件名格式必须是 V{version}__{description}.sql、V{version}__{description}.java，version必须是整数
-    locations: classpath:/sql/migration/postgresql/zh_CN
+    locations: classpath:/sql/migration/postgresql
   http:
     codec:
       max-in-memory-size: 1MB

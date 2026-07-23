@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.service.llm.agent.builtin;
 
 import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
+import io.github.jerryt92.j2agent.model.I18nString;
 import io.github.jerryt92.j2agent.service.llm.LlmSyncService;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
@@ -57,7 +58,9 @@ class UniversalIntentQueryServiceTest {
     void sanitizeCandidateJsonFiltersUnknownAgents() {
         AiAgent reportAgent = Mockito.mock(AiAgent.class);
         Mockito.when(reportAgent.getAgentId()).thenReturn("chat_assistant");
-        Mockito.when(reportAgent.getAgentName()).thenReturn("智能报告");
+        Mockito.when(reportAgent.getAgentName()).thenReturn(new I18nString()
+                .zhCN("智能报告")
+                .enUS("Intelligent Report"));
 
         String raw = """
                 [
@@ -240,13 +243,13 @@ class UniversalIntentQueryServiceTest {
         }
 
         @Override
-        public String getAgentName() {
-            return name;
+        public I18nString getAgentName() {
+            return new I18nString().zhCN(name).enUS(name);
         }
 
         @Override
-        public String getAgentDescription() {
-            return description;
+        public I18nString getAgentDescription() {
+            return new I18nString().zhCN(description).enUS(description);
         }
 
         @Override

@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.service.llm.agent.builtin;
 
 import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
+import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
@@ -52,7 +53,7 @@ class UniversalAssistantOrchestratorServiceTest {
         UniversalAssistantOrchestratorService.OrchestrationOutcome outcome = service.orchestrate(request("hello"));
 
         assertEquals(UniversalAssistantOrchestratorService.OrchestrationOutcome.CONTINUE, outcome);
-        verify(orchestrationDecisionService, never()).decide(anyString(), anyString(), anyList(), anySet(), anyBoolean(), any());
+        verify(orchestrationDecisionService, never()).decide(anyString(), anyString(), anyList(), anySet(), anyBoolean(), any(), any());
         verify(subAgentCallService, never()).call(anyString(), anyString(), any());
     }
 
@@ -69,7 +70,7 @@ class UniversalAssistantOrchestratorServiceTest {
         when(intentQueryService.buildRoutingQuery(
                 ArgumentMatchers.eq(chatMemory), anyString(), anyList(), anyString())).thenReturn("routing");
         when(intentQueryService.queryIntentAgents(anyString(), anyString(), any())).thenReturn("[{\"agentId\":\"wiki\"}]");
-        when(orchestrationDecisionService.decide(anyString(), anyString(), anyList(), anySet(), anyBoolean(), any()))
+        when(orchestrationDecisionService.decide(anyString(), anyString(), anyList(), anySet(), anyBoolean(), any(), any()))
                 .thenReturn(UniversalOrchestrationDecisionService.OrchestrationDecision.invoke("wiki", null, "ok"))
                 .thenReturn(UniversalOrchestrationDecisionService.OrchestrationDecision.complete("done"));
         when(subAgentCallService.call(anyString(), anyString(), any())).thenReturn("answer");
@@ -86,7 +87,8 @@ class UniversalAssistantOrchestratorServiceTest {
                         null,
                         List.of(attachment),
                         "用户原问题",
-                        null));
+                        null,
+                        userContext("zh_CN")));
 
         assertEquals(UniversalAssistantOrchestratorService.OrchestrationOutcome.ORCHESTRATED, outcome);
 
@@ -124,11 +126,12 @@ class UniversalAssistantOrchestratorServiceTest {
                         null,
                         List.of(),
                         "用户原问题",
-                        "wiki"));
+                        "wiki",
+                        userContext("zh_CN")));
 
         assertEquals(UniversalAssistantOrchestratorService.OrchestrationOutcome.ORCHESTRATED, outcome);
         verify(intentQueryService, never()).queryIntentAgents(anyString(), anyString(), any());
-        verify(orchestrationDecisionService, never()).decide(anyString(), anyString(), anyList(), anySet(), anyBoolean(), any());
+        verify(orchestrationDecisionService, never()).decide(anyString(), anyString(), anyList(), anySet(), anyBoolean(), any(), any());
         verify(subAgentCallService).call(eq("wiki"), eq("routing"), any());
     }
 
@@ -158,10 +161,11 @@ class UniversalAssistantOrchestratorServiceTest {
                         null,
                         List.of(),
                         "用户原问题",
-                        "missing")));
+                        "missing",
+                        userContext("zh_CN"))));
 
         verify(intentQueryService, never()).queryIntentAgents(anyString(), anyString(), any());
-        verify(orchestrationDecisionService, never()).decide(anyString(), anyString(), anyList(), anySet(), anyBoolean(), any());
+        verify(orchestrationDecisionService, never()).decide(anyString(), anyString(), anyList(), anySet(), anyBoolean(), any(), any());
         verify(subAgentCallService, never()).call(anyString(), anyString(), any());
     }
 
@@ -212,6 +216,14 @@ class UniversalAssistantOrchestratorServiceTest {
                 null,
                 List.of(),
                 userMessage,
-                null);
+                null,
+                userContext("zh_CN"));
+    }
+
+    private static UserContextBo userContext(String language) {
+        UserContextBo userContext = new UserContextBo();
+        userContext.setUserId("user-1");
+        userContext.setLanguage(language);
+        return userContext;
     }
 }

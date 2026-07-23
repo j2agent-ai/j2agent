@@ -25,5 +25,5 @@ public final class CommonConstants {
 
     public static final String EN_US = "en_US";
 
-    public static final String ENGLISH_LLM_PROMPT = "All answers are in English.";
+    public static final String ENGLISH_LLM_PROMPT = "Please output content in English.";
 }

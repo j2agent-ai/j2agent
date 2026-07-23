@@ -82,8 +82,7 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
         UserContextBo session = loginService.getSession();
         ChatContextBo chatContextBo = chatContextService.getChatContext(contextId, session == null ? null : session.getUserId(), agentId);
         boolean ragSourceDisplayEnabled = UniversalAssistantConstants.isUniversalAssistant(agentId)
-                ? true
-                : agentRouter.route(agentId).isRagSourceDisplayEnabled();
+                || UniversalAssistantConstants.isKnowledgeQaAssistant(agentId) || agentRouter.route(agentId).isRagSourceDisplayEnabled();
         ChatContextDto dto = chatContextBo == null
                 ? new ChatContextDto().messages(List.of())
                 : Translator.translateToChatContextDto(chatContextBo, ragSourceDisplayEnabled);
@@ -122,7 +121,8 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
      */
     @Override
     public ResponseEntity<AgentInfoList> listAgents() {
-        return ResponseEntity.ok(agentRouter.listRegisteredAgents());
+        UserContextBo session = loginService.getSession();
+        return ResponseEntity.ok(agentRouter.listRegisteredAgents(session == null ? null : session.getLanguage()));
     }
 
     @Override
@@ -198,7 +198,11 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
         };
         chatChatCallback.completeCall = () -> closeSession(wsSession);
         String agentId = (String) wsSession.getAttributes().get(AGENT_ID_ATTRIBUTE);
-        chatService.handleChat(chatChatCallback, chatRequestDto, userContextBo == null ? null : userContextBo.getUserId(), agentId);
+        chatService.handleChat(
+                chatChatCallback,
+                chatRequestDto,
+                userContextBo,
+                agentId);
     }
 
     /**

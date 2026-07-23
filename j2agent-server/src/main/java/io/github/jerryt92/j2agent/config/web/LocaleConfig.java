@@ -4,18 +4,16 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.LocaleResolver;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
-import org.springframework.web.servlet.i18n.FixedLocaleResolver;
-
-import java.util.Locale;
+import org.springframework.web.servlet.i18n.AcceptHeaderLocaleResolver;
 
 /**
- * API 错误文案固定使用简体中文（不跟随浏览器 Accept-Language，避免中文界面仍返回英文报错）。
+ * API 文案跟随前端传入的 Accept-Language / X-Locale 标识。
  */
 @Configuration
 public class LocaleConfig implements WebMvcConfigurer {
 
     @Bean
     public LocaleResolver localeResolver() {
-        return new FixedLocaleResolver(Locale.SIMPLIFIED_CHINESE);
+        return new AcceptHeaderLocaleResolver();
     }
 }

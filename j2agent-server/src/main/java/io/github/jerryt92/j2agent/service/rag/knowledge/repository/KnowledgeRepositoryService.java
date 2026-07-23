@@ -46,6 +46,10 @@ import java.util.stream.Stream;
 @Slf4j
 @Service
 public class KnowledgeRepositoryService {
+    private static final String DISPLAY_NAME_CONFIG_KEY = "display_name";
+    private static final String LEGACY_ALIAS_CONFIG_KEY = "alias";
+    private static final String COLLECTION_ALIASES_CONFIG_KEY = "collectionAliases";
+
     private final KnowledgeRepositoryMapper mapper;
     private final KnowledgeRepoProperties properties;
     private final KnowledgeRepoMetadataService metadataService;
@@ -145,7 +149,7 @@ public class KnowledgeRepositoryService {
         po.setStatus(KnowledgeRepositoryConstants.STATUS_IDLE);
         po.setRemoteUrl(remoteUrl);
         po.setDefaultBranch(StringUtils.trimToNull(request.getDefaultBranch()));
-        po.setProtocolConfig(toProtocolConfigJson(request.getProtocolConfig(), null));
+        po.setProtocolConfig(toProtocolConfigJson(request.getProtocolConfig(), request.getDisplayName(), request.getCollectionAliases(), null));
         po.setCredentialConfigCipher(resolveCredentialCipher(request.getCredentialConfig(), null));
         po.setCreatedAt(now);
         po.setUpdatedAt(now);
@@ -165,7 +169,7 @@ public class KnowledgeRepositoryService {
         current.setUpdateIntervalMinutes(normalizeInterval(request.getUpdateIntervalMinutes()));
         current.setRemoteUrl(requireText(request.getRemoteUrl(), "remoteUrl"));
         current.setDefaultBranch(StringUtils.trimToNull(request.getDefaultBranch()));
-        current.setProtocolConfig(toProtocolConfigJson(request.getProtocolConfig(), current));
+        current.setProtocolConfig(toProtocolConfigJson(request.getProtocolConfig(), request.getDisplayName(), request.getCollectionAliases(), current));
         current.setCredentialConfigCipher(resolveCredentialCipher(request.getCredentialConfig(), current));
         current.setUpdatedAt(now);
         mapper.updateConfig(current);
@@ -283,9 +287,12 @@ public class KnowledgeRepositoryService {
         item.setLastRevisionTime(remoteConfig == null ? null : remoteConfig.getLastRevisionTime());
         item.setLastSyncTime(remoteConfig == null ? null : remoteConfig.getLastSyncTime());
         item.setLastError(remoteConfig == null ? null : remoteConfig.getLastError());
-        item.setProtocolConfig(remoteConfig == null ? Map.of() : parseProtocolConfig(remoteConfig.getProtocolConfig()));
+        Map<String, Object> protocolConfig = remoteConfig == null ? Map.of() : parseProtocolConfig(remoteConfig.getProtocolConfig());
+        item.setProtocolConfig(protocolConfig);
         item.setHasCredential(remoteConfig != null && StringUtils.isNotBlank(remoteConfig.getCredentialConfigCipher()));
         item.setCollections(info.collections());
+        item.setDisplayName(remoteConfig == null ? null : extractDisplayName(protocolConfig));
+        item.setCollectionAliases(remoteConfig == null ? Map.of() : extractCollectionAliases(protocolConfig));
         item.setMinHeadingLevel(info.minHeadingLevel());
         item.setFilenameAsTitle(info.filenameAsTitle());
         return item;
@@ -363,11 +370,32 @@ public class KnowledgeRepositoryService {
         return current == null ? null : current.getCredentialConfigCipher();
     }
 
-    private String toProtocolConfigJson(Map<String, Object> protocolConfig, KnowledgeRepositoryPo current) {
-        if (protocolConfig == null) {
+    private String toProtocolConfigJson(Map<String, Object> protocolConfig,
+                                        String displayName,
+                                        Map<String, String> collectionAliases,
+                                        KnowledgeRepositoryPo current) {
+        if (protocolConfig == null && displayName == null && collectionAliases == null) {
             return current == null ? "{}" : StringUtils.defaultIfBlank(current.getProtocolConfig(), "{}");
         }
-        return JSON.toJSONString(protocolConfig);
+        Map<String, Object> next = protocolConfig == null
+                ? new LinkedHashMap<>(parseProtocolConfig(current == null ? null : current.getProtocolConfig()))
+                : new LinkedHashMap<>(protocolConfig);
+        String normalizedDisplayName = displayName == null ? extractDisplayName(next) : StringUtils.trimToNull(displayName);
+        next.remove(LEGACY_ALIAS_CONFIG_KEY);
+        if (normalizedDisplayName == null) {
+            next.remove(DISPLAY_NAME_CONFIG_KEY);
+        } else {
+            next.put(DISPLAY_NAME_CONFIG_KEY, normalizedDisplayName);
+        }
+        Map<String, String> aliases = collectionAliases == null
+                ? extractCollectionAliases(next)
+                : normalizeCollectionAliases(collectionAliases);
+        if (aliases.isEmpty()) {
+            next.remove(COLLECTION_ALIASES_CONFIG_KEY);
+        } else {
+            next.put(COLLECTION_ALIASES_CONFIG_KEY, aliases);
+        }
+        return JSON.toJSONString(next);
     }
 
     private Map<String, Object> parseProtocolConfig(String json) {
@@ -375,6 +403,52 @@ public class KnowledgeRepositoryService {
             return Map.of();
         }
         return new LinkedHashMap<>(JSON.parseObject(json));
+    }
+
+    private String extractDisplayName(Map<String, Object> protocolConfig) {
+        if (protocolConfig == null || protocolConfig.isEmpty()) {
+            return null;
+        }
+        Object raw = protocolConfig.get(DISPLAY_NAME_CONFIG_KEY);
+        if (raw == null) {
+            raw = protocolConfig.get(LEGACY_ALIAS_CONFIG_KEY);
+        }
+        return raw == null ? null : StringUtils.trimToNull(raw.toString());
+    }
+
+    private Map<String, String> extractCollectionAliases(Map<String, Object> protocolConfig) {
+        if (protocolConfig == null || protocolConfig.isEmpty()) {
+            return Map.of();
+        }
+        Object raw = protocolConfig.get(COLLECTION_ALIASES_CONFIG_KEY);
+        if (raw == null) {
+            return Map.of();
+        }
+        if (raw instanceof Map<?, ?> rawMap) {
+            Map<String, String> aliases = new LinkedHashMap<>();
+            rawMap.forEach((key, value) -> {
+                String collection = key == null ? null : key.toString();
+                String alias = value == null ? null : value.toString();
+                if (StringUtils.isNotBlank(collection) && StringUtils.isNotBlank(alias)) {
+                    aliases.put(collection.trim(), alias.trim());
+                }
+            });
+            return aliases;
+        }
+        return Map.of();
+    }
+
+    private Map<String, String> normalizeCollectionAliases(Map<String, String> collectionAliases) {
+        if (collectionAliases == null || collectionAliases.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> aliases = new LinkedHashMap<>();
+        collectionAliases.forEach((collection, alias) -> {
+            if (StringUtils.isNotBlank(collection) && StringUtils.isNotBlank(alias)) {
+                aliases.put(collection.trim(), alias.trim());
+            }
+        });
+        return aliases;
     }
 
     private KnowledgeRepositoryPo requireRemote(String id) {

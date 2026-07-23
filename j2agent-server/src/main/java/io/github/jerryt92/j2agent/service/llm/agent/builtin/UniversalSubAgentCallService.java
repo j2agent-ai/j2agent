@@ -6,6 +6,7 @@ import io.github.jerryt92.j2agent.service.llm.ThinkingOverrideRegistry;
 import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamOptions;
 import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamSession;
 import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
+import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunContext;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
@@ -104,7 +105,9 @@ public class UniversalSubAgentCallService {
                 turnId,
                 specialistConversationId,
                 trimmedAgentId,
+                request.userContext(),
                 attachments,
+                List.of(),
                 request.toolEventEmitter(),
                 true,
                 false);
@@ -209,15 +212,7 @@ public class UniversalSubAgentCallService {
             String userId,
             String parentConversationId,
             ToolEventEmitter toolEventEmitter,
-            List<ChatAttachmentDto> attachments) {
-
-        public SubAgentCallRequest(
-                String contextId,
-                String turnId,
-                String userId,
-                String parentConversationId,
-                ToolEventEmitter toolEventEmitter) {
-            this(contextId, turnId, userId, parentConversationId, toolEventEmitter, List.of());
-        }
+            List<ChatAttachmentDto> attachments,
+            UserContextBo userContext) {
     }
 }

@@ -11,6 +11,7 @@ public class LlmUsageRecordPo {
     private String turnId;
     private Integer callSeq;
     private String callKind;
+    private String providerConfigId;
     private String providerType;
     private String modelName;
     private Integer inputTokens;

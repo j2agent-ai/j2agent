@@ -85,6 +85,7 @@ public class ActiveProviderHolder {
             log.error("解析 LLM config_json 失败，id={}", po.getId(), e);
             return null;
         }
+        cfg.setId(po.getId());
         cfg.setProviderType(po.getProviderType());
         return cfg;
     }

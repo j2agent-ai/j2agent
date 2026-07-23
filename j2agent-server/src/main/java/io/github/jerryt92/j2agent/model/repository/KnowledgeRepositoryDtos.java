@@ -39,6 +39,8 @@ public final class KnowledgeRepositoryDtos {
         private Map<String, Object> protocolConfig;
         private Boolean hasCredential;
         private List<String> collections;
+        private String displayName;
+        private Map<String, String> collectionAliases;
         private Integer minHeadingLevel;
         private Boolean filenameAsTitle;
     }
@@ -52,6 +54,8 @@ public final class KnowledgeRepositoryDtos {
         private String remoteUrl;
         private String defaultBranch;
         private Map<String, Object> protocolConfig;
+        private String displayName;
+        private Map<String, String> collectionAliases;
         private CredentialConfig credentialConfig;
     }
 

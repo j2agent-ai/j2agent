@@ -2,6 +2,7 @@ package io.github.jerryt92.j2agent.service.llm.agent.builtin;
 
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
+import io.github.jerryt92.j2agent.model.I18nString;
 import org.springframework.stereotype.Component;
 
 /**
@@ -17,13 +18,17 @@ public class UniversalAssistantAgent extends AiAgent {
     }
 
     @Override
-    public String getAgentName() {
-        return UniversalAssistantConstants.DISPLAY_NAME;
+    public I18nString getAgentName() {
+        return new I18nString()
+                .zhCN(UniversalAssistantConstants.DISPLAY_NAME)
+                .enUS("Universal AI Assistant");
     }
 
     @Override
-    public String getAgentDescription() {
-        return "平台通用助手，可自动委派子智能体处理专业问题。";
+    public I18nString getAgentDescription() {
+        return new I18nString()
+                .zhCN("平台通用助手，可自动委派子智能体处理专业问题。")
+                .enUS("Platform assistant that can automatically delegate specialized tasks to sub-agents.");
     }
 
     @Override

@@ -9,6 +9,9 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public final class LlmActiveConfig {
+    /** api_provider_config.id */
+    private String id;
+
     /** 提供商类型，决定运行时如何构建 ChatModel */
     private String providerType;
 
@@ -38,6 +41,14 @@ public final class LlmActiveConfig {
 
     /** Anthropic thinking.budget_tokens 或 LM Studio reasoning_tokens（thinkingMode=on）；未填时用 {@link LlmThinkingSupport#DEFAULT_THINKING_BUDGET} */
     private Integer thinkingBudgetTokens;
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
 
     public String getProviderType() {
         return providerType;

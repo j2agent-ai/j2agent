@@ -14,6 +14,7 @@ import io.github.jerryt92.j2agent.model.ChatCallback;
 import io.github.jerryt92.j2agent.model.ChatRequestDto;
 import io.github.jerryt92.j2agent.model.ChatResponseDto;
 import io.github.jerryt92.j2agent.model.MessageDto;
+import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunContext;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
@@ -46,9 +47,12 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
 import reactor.core.Exceptions;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -100,7 +104,12 @@ public class ChatService {
         contextChatCallbackMap.remove(contextId);
     }
 
-    public void handleChat(ChatCallback<AgentUiEventEnvelope> chatChatCallback, ChatRequestDto request, String userId, String agentId) {
+    public void handleChat(
+            ChatCallback<AgentUiEventEnvelope> chatChatCallback,
+            ChatRequestDto request,
+            UserContextBo userContext,
+            String agentId) {
+        String userId = userContext == null ? null : userContext.getUserId();
         String turnId = UUIDv7Utils.randomUUIDv7();
         ChatTurnCancellationRegistry.clear(turnId);
         AtomicLong seq = new AtomicLong(0L);
@@ -251,6 +260,11 @@ public class ChatService {
             agentChatMemoryRef.set(aiAgentForConversation.getChatMemory());
             final ChatMemory agentChatMemory = agentChatMemoryRef.get();
             final boolean universalAssistant = UniversalAssistantConstants.isUniversalAssistant(resolvedAgentId);
+            final List<String> knowledgeCollections = normalizeKnowledgeCollections(request.getKnowledgeCollections());
+            if (UniversalAssistantConstants.isKnowledgeQaAssistant(resolvedAgentId)
+                    && knowledgeCollections.isEmpty()) {
+                throw new IllegalArgumentException("Knowledge collections are required.");
+            }
             if (universalAssistant) {
                 ChatTurnLifecycle.persistTurnUserMessage(
                         agentChatMemory, turnConversationId, limitedUserMessage, finalAttachments);
@@ -262,7 +276,9 @@ public class ChatService {
                     turnId,
                     turnConversationId,
                     resolvedAgentId,
+                    userContext,
                     finalAttachments,
+                    knowledgeCollections,
                     toolEventEmitter,
                     false,
                     universalAssistant);
@@ -453,7 +469,8 @@ public class ChatService {
                                             toolEventEmitter,
                                             finalAttachments,
                                             limitedUserMessage,
-                                            request.getManualOrchestrateAgentId()));
+                                            request.getManualOrchestrateAgentId(),
+                                            userContext));
                     if (outcome == UniversalAssistantOrchestratorService.OrchestrationOutcome.ORCHESTRATED) {
                         unbindThinkingOverride.run();
                         ChatTurnCancellationRegistry.clearDisposables(turnId);
@@ -681,6 +698,9 @@ public class ChatService {
                 if (msg.contains("No user message")) {
                     return "noUserMessage";
                 }
+                if (msg.contains("Knowledge collections are required")) {
+                    return "knowledgeCollectionsRequired";
+                }
             }
         }
         if (LlmProviderErrorFormatter.isProviderCallFailure(t)) {
@@ -847,6 +867,20 @@ public class ChatService {
             }
         }
         throw new IllegalArgumentException("No user message found in request.");
+    }
+
+    private static List<String> normalizeKnowledgeCollections(List<String> rawCollections) {
+        if (CollectionUtils.isEmpty(rawCollections)) {
+            return List.of();
+        }
+        Set<String> normalized = new LinkedHashSet<>();
+        for (String raw : rawCollections) {
+            String collection = StringUtils.trimToNull(raw);
+            if (collection != null) {
+                normalized.add(collection);
+            }
+        }
+        return new ArrayList<>(normalized);
     }
 
     /**

@@ -31,6 +31,7 @@ public class LlmUsageRecorder {
         LlmUsageRecordPo row = new LlmUsageRecordPo();
         row.setId(UUIDv7Utils.randomUUIDv7());
         row.setCallKind(callKind == null ? "CHAT" : callKind);
+        row.setProviderConfigId(cfg == null ? null : cfg.getId());
         row.setProviderType(cfg == null ? null : cfg.getProviderType());
         row.setModelName(cfg == null ? null : cfg.getModelName());
         row.setInputTokens(snapshot.getInputTokens());

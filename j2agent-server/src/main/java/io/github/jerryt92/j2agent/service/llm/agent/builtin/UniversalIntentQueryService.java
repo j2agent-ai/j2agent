@@ -3,6 +3,7 @@ package io.github.jerryt92.j2agent.service.llm.agent.builtin;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import io.github.jerryt92.j2agent.constants.CommonConstants;
 import io.github.jerryt92.j2agent.logging.llm.AgentRunEventType;
 import io.github.jerryt92.j2agent.logging.llm.AgentRunLogger;
 import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
@@ -377,7 +378,7 @@ public class UniversalIntentQueryService {
                 sb.append('\n');
             }
             sb.append("【").append(agent.getAgentId()).append("】\n");
-            sb.append("name: ").append(agent.getAgentName()).append('\n');
+            sb.append("name: ").append(agent.resolveAgentName(CommonConstants.ZH_CN)).append('\n');
             sb.append("orchestrationPrompt: ").append(normalizeOrchestrationPromptText(agent.resolveOrchestrationPrompt()));
         }
         return sb.toString();

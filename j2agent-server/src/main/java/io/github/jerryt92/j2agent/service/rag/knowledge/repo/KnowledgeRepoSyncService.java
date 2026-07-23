@@ -11,6 +11,11 @@ import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.FileVisitOption;
@@ -344,7 +349,7 @@ public class KnowledgeRepoSyncService {
             throw e;
         } catch (RuntimeException e) {
             progressTracker.markFileFailed(changedPath, collection, e.getMessage());
-            throw e;
+            log.error("知识库文件处理失败，已跳过并继续同步: path={}, collection={}", changedPath, collection, e);
         }
     }
 
@@ -361,7 +366,7 @@ public class KnowledgeRepoSyncService {
             return UpsertOutcome.skipped("文件状态不可用");
         }
         try {
-            String documentContent = Files.readString(filePath, StandardCharsets.UTF_8);
+            String documentContent = readKnowledgeDocument(filePath, relativePath);
             int minHeadingLevel = metadataService.resolveMinHeadingLevel(filePath);
             boolean filenameAsTitle = metadataService.resolveFilenameAsTitle(filePath);
             String filenameTitle = resolveFilenameTitle(relativePath);
@@ -395,6 +400,40 @@ public class KnowledgeRepoSyncService {
         } catch (IOException e) {
             throw new IllegalStateException("读取知识库文档失败: " + filePath, e);
         }
+    }
+
+    /**
+     * 读取知识库文档内容；遇非法 UTF-8 字节时用替换字符继续解码。
+     */
+    private String readKnowledgeDocument(Path filePath, String relativePath) throws IOException {
+        byte[] bytes = Files.readAllBytes(filePath);
+        try {
+            return newUtf8Decoder(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException e) {
+            log.warn("知识库文档包含非法 UTF-8 字节，已使用替换字符继续入库: path={}", relativePath);
+            return decodeWithReplacement(bytes);
+        }
+    }
+
+    /**
+     * 以替换字符方式解码非法 UTF-8 字节。
+     */
+    private String decodeWithReplacement(byte[] bytes) throws IOException {
+        try {
+            CharBuffer decoded = newUtf8Decoder(CodingErrorAction.REPLACE).decode(ByteBuffer.wrap(bytes));
+            return decoded.toString();
+        } catch (CharacterCodingException e) {
+            throw new IOException("替换非法 UTF-8 字节后仍无法读取知识库文档", e);
+        }
+    }
+
+    /**
+     * 创建指定错误处理策略的 UTF-8 解码器。
+     */
+    private CharsetDecoder newUtf8Decoder(CodingErrorAction codingErrorAction) {
+        return StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(codingErrorAction)
+                .onUnmappableCharacter(codingErrorAction);
     }
 
     /**

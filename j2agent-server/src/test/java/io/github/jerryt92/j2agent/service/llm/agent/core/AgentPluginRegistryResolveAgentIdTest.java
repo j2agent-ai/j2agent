@@ -1,5 +1,6 @@
 package io.github.jerryt92.j2agent.service.llm.agent.core;
 
+import io.github.jerryt92.j2agent.model.I18nString;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import org.junit.jupiter.api.Test;
 import org.springframework.objenesis.SpringObjenesis;
@@ -25,13 +26,13 @@ class AgentPluginRegistryResolveAgentIdTest {
         }
 
         @Override
-        public String getAgentName() {
-            return "stub";
+        public I18nString getAgentName() {
+            return new I18nString().zhCN("stub").enUS("stub");
         }
 
         @Override
-        public String getAgentDescription() {
-            return "stub";
+        public I18nString getAgentDescription() {
+            return new I18nString().zhCN("stub").enUS("stub");
         }
 
         @Override

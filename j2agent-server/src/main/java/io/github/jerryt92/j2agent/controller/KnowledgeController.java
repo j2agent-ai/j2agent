@@ -59,6 +59,7 @@ public class KnowledgeController implements KnowledgeApi {
     }
 
     @Override
+    @RequiredRole(RequiredRole.USER)
     public ResponseEntity<KnowledgeCollectionListDto> getKnowledgeCollections() {
         return ResponseEntity.ok(knowledgeService.getKnowledgeCollections());
     }

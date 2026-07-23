@@ -10,6 +10,7 @@ import io.github.jerryt92.j2agent.model.AuthResultDto;
 import io.github.jerryt92.j2agent.model.po.mgb.UserPo;
 import io.github.jerryt92.j2agent.model.po.mgb.UserPoExample;
 import io.github.jerryt92.j2agent.model.security.UserContextBo;
+import io.github.jerryt92.j2agent.utils.I18nLocaleUtils;
 import io.github.jerryt92.j2agent.utils.UserUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.commons.lang3.StringUtils;
@@ -67,7 +68,14 @@ public class LoginService {
     }
 
     public boolean resolveRequest(HttpServletRequest request) {
-        return resolveToken(extractToken(request));
+        boolean resolved = resolveToken(extractToken(request));
+        if (resolved) {
+            UserContextBo userContextBo = getSession();
+            if (userContextBo != null) {
+                userContextBo.setLanguage(I18nLocaleUtils.resolveRequestLanguage(request));
+            }
+        }
+        return resolved;
     }
 
     public boolean resolveToken(String token) {

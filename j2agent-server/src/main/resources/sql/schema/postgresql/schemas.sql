@@ -52,6 +52,7 @@ CREATE TABLE llm_usage_record
     turn_id                 varchar(64)   NULL,
     call_seq                int           NULL,
     call_kind               varchar(32)   NOT NULL,
+    provider_config_id      varchar(32)   NULL,
     provider_type           varchar(64)   NULL,
     model_name              varchar(128)  NULL,
     input_tokens            int           NULL,

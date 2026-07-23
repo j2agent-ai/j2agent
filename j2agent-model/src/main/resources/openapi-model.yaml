@@ -508,7 +508,25 @@ components:
         data:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/KnowledgeCollectionDto'
+    KnowledgeCollectionDto:
+      type: object
+      properties:
+        collection:
+          type: string
+          description: Milvus collection 名称，用于检索请求
+        name:
+          type: string
+          description: 前端展示名称
+        repoCode:
+          type: string
+          description: 知识库目录名
+        repositoryName:
+          type: string
+          description: 仓库级展示名称
+        type:
+          type: string
+          description: 仓库类型
     KnowledgeSyncResult:
       type: object
       description: 知识库目录同步提交结果（异步接受或拒绝）
@@ -697,10 +715,10 @@ components:
           description: 智能体唯一标识
         name:
           type: string
-          description: 展示名称
+          description: 当前语言下的智能体展示名称
         description:
           type: string
-          description: 说明
+          description: 当前语言下的智能体描述
         showHotQuestions:
           type: boolean
           description: 是否在聊天页展示热门问题模板
@@ -947,6 +965,11 @@ components:
         manualOrchestrateAgentId:
           type: string
           description: 通用助手手动直连的子智能体 ID；仅 universal_assistant 生效，传入后跳过编排决策
+        knowledgeCollections:
+          type: array
+          description: 通用知识库问答助手本轮选择的知识库 collection 列表；仅 knowledge_qa_assistant 生效
+          items:
+            type: string
     ChatResponseDto:
       type: object
       properties:

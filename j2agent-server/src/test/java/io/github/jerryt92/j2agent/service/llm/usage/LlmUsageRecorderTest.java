@@ -38,6 +38,7 @@ class LlmUsageRecorderTest {
         assertEquals("ctx1", first.getContextId());
         assertEquals("agent1", first.getAgentId());
         assertEquals("turn1", first.getTurnId());
+        assertEquals("provider-config-1", first.getProviderConfigId());
         assertEquals(1, first.getCallSeq());
         assertEquals(2, second.getCallSeq());
     }
@@ -61,6 +62,7 @@ class LlmUsageRecorderTest {
 
     private static LlmActiveConfig config() {
         LlmActiveConfig cfg = new LlmActiveConfig();
+        cfg.setId("provider-config-1");
         cfg.setProviderType("openai");
         cfg.setModelName("gpt-test");
         return cfg;

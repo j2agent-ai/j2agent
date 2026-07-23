@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.service.llm.agent.builtin;
 
 import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
+import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
@@ -63,7 +64,8 @@ public class UniversalAssistantOrchestratorService {
             ToolEventEmitter toolEventEmitter,
             List<ChatAttachmentDto> attachments,
             String userMessage,
-            String manualOrchestrateAgentId) {
+            String manualOrchestrateAgentId,
+            UserContextBo userContext) {
     }
 
     /**
@@ -124,7 +126,8 @@ public class UniversalAssistantOrchestratorService {
                             request.userId(),
                             request.parentConversationId(),
                             emitter,
-                            turnAttachments));
+                            turnAttachments,
+                            request.userContext()));
             if (emitter != null) {
                 emitter.onToolSuccess(callId, SubAgentCallNames.TOOL_NAME, result,
                         System.currentTimeMillis() - startedAt);
@@ -185,7 +188,8 @@ public class UniversalAssistantOrchestratorService {
                             request.userId(),
                             request.parentConversationId(),
                             emitter,
-                            turnAttachments));
+                            turnAttachments,
+                            request.userContext()));
             if (emitter != null) {
                 emitter.onToolSuccess(callId, SubAgentCallNames.TOOL_NAME, result,
                         System.currentTimeMillis() - startedAt);
