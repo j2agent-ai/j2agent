@@ -203,7 +203,6 @@ class KnowledgeQaGrepTool {
         try (Stream<Path> walk = Files.walk(normalizedRoot)) {
             return walk.filter(Files::isRegularFile)
                     .filter(path -> path.getFileName().toString().endsWith(MD_SUFFIX))
-                    .filter(path -> !"info.json".equals(path.getFileName().toString()))
                     .filter(path -> isInSelectedCollection(path, selectedCollections))
                     .filter(path -> matchesRelativeSubDir(normalizedRoot, path, normalizedSubDir))
                     .sorted(Comparator.comparing(path -> normalizedRoot.relativize(path).toString()))

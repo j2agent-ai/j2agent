@@ -15,12 +15,12 @@ public class KnowledgeSourceFileHashPo {
     private String filePathHash;
     private String fileSha256;
     /**
-     * 匹配 info.json 文件哈希。
+     * 匹配知识库高级配置的哈希。
      */
-    private String infoJsonHash;
+    private String metadataConfigHash;
     private String collectionName;
     /**
-     * Milvus 分区名列表 JSON（与 info.json 的 partition_names 一致，空配置为 null）。
+     * Milvus 分区名列表 JSON（空配置为 null）。
      */
     private String partitionNamesJson;
     /**
@@ -36,4 +36,3 @@ public class KnowledgeSourceFileHashPo {
     private Long createdAt;
     private Long updatedAt;
 }
-

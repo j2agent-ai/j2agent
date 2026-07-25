@@ -1,13 +1,11 @@
 package io.github.jerryt92.j2agent.service.rag.knowledge.repository;
 
 import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import io.github.jerryt92.j2agent.config.rag.KnowledgeRepoProperties;
 import io.github.jerryt92.j2agent.mapper.KnowledgeRepositoryMapper;
 import io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo;
 import io.github.jerryt92.j2agent.model.repository.KnowledgeRepositoryDtos;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMaintenanceCoordinator;
-import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMetadataService;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoSyncOutcome;
 import io.github.jerryt92.j2agent.utils.UUIDv7Utils;
 import lombok.extern.slf4j.Slf4j;
@@ -46,30 +44,26 @@ import java.util.stream.Stream;
 @Slf4j
 @Service
 public class KnowledgeRepositoryService {
-    private static final String DISPLAY_NAME_CONFIG_KEY = "display_name";
-    private static final String LEGACY_ALIAS_CONFIG_KEY = "alias";
-    private static final String COLLECTION_ALIASES_CONFIG_KEY = "collectionAliases";
-
     private final KnowledgeRepositoryMapper mapper;
     private final KnowledgeRepoProperties properties;
-    private final KnowledgeRepoMetadataService metadataService;
     private final KnowledgeRepoMaintenanceCoordinator maintenanceCoordinator;
     private final KnowledgeRepositoryCredentialCipher credentialCipher;
+    private final KnowledgeRepositoryAutoRegistrar autoRegistrar;
     private final Map<String, KnowledgeRepositorySyncer> syncers;
     private final Set<String> runningRepositoryCodes = ConcurrentHashMap.newKeySet();
     private final ThreadPoolExecutor syncExecutor;
 
     public KnowledgeRepositoryService(KnowledgeRepositoryMapper mapper,
                                       KnowledgeRepoProperties properties,
-                                      KnowledgeRepoMetadataService metadataService,
                                       KnowledgeRepoMaintenanceCoordinator maintenanceCoordinator,
                                       KnowledgeRepositoryCredentialCipher credentialCipher,
+                                      KnowledgeRepositoryAutoRegistrar autoRegistrar,
                                       List<KnowledgeRepositorySyncer> syncers) {
         this.mapper = mapper;
         this.properties = properties;
-        this.metadataService = metadataService;
         this.maintenanceCoordinator = maintenanceCoordinator;
         this.credentialCipher = credentialCipher;
+        this.autoRegistrar = autoRegistrar;
         this.syncers = syncers.stream()
                 .collect(Collectors.toUnmodifiableMap(syncer -> syncer.protocol().toUpperCase(Locale.ROOT), Function.identity()));
         this.syncExecutor = new ThreadPoolExecutor(
@@ -86,17 +80,9 @@ public class KnowledgeRepositoryService {
     }
 
     public KnowledgeRepositoryDtos.ListResponse list() {
-        Map<String, KnowledgeRepositoryPo> remoteByCode = mapper.selectRemoteAll().stream()
-                .collect(Collectors.toMap(KnowledgeRepositoryPo::getRepoCode, Function.identity(), (left, right) -> left));
-        Map<String, Path> repositoryPathsByCode = new LinkedHashMap<>();
-        for (Path path : listTopLevelRepositoryDirs()) {
-            repositoryPathsByCode.put(path.getFileName().toString(), path);
-        }
-        for (KnowledgeRepositoryPo remoteConfig : remoteByCode.values()) {
-            repositoryPathsByCode.putIfAbsent(remoteConfig.getRepoCode(), resolveRepoPath(remoteConfig.getRepoCode()));
-        }
-        List<KnowledgeRepositoryDtos.Item> items = repositoryPathsByCode.entrySet().stream()
-                .map(entry -> toDirectoryItem(entry.getValue(), remoteByCode.get(entry.getKey())))
+        autoRegistrar.ensureLocalRepositoriesForExistingDirectories();
+        List<KnowledgeRepositoryDtos.Item> items = mapper.selectAll().stream()
+                .map(this::toItem)
                 .sorted(Comparator.comparing(KnowledgeRepositoryDtos.Item::getRepoCode))
                 .toList();
         KnowledgeRepositoryDtos.ListResponse response = new KnowledgeRepositoryDtos.ListResponse();
@@ -109,94 +95,89 @@ public class KnowledgeRepositoryService {
         if (po == null) {
             po = mapper.selectByRepoCode(repoCodeOrId);
         }
-        String repoCode = po == null ? repoCodeOrId : po.getRepoCode();
-        Path repoPath = resolveRepoPath(repoCode);
-        if (po == null && !Files.isDirectory(repoPath)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "knowledge repository directory not found");
+        if (po == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "knowledge repository config not found");
         }
-        return toDirectoryItem(repoPath, po);
+        return toItem(po);
     }
 
     public KnowledgeRepositoryDtos.Item create(KnowledgeRepositoryDtos.UpsertRequest request) {
-        String remoteUrl = requireText(request.getRemoteUrl(), "remoteUrl");
+        String type = normalizeType(request.getType());
+        String remoteUrl = KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)
+                ? requireText(request.getRemoteUrl(), "remoteUrl")
+                : StringUtils.trimToNull(request.getRemoteUrl());
         String repoCode = normalizeRepoCode(StringUtils.defaultIfBlank(
                 request.getRepoCode(),
-                deriveRepoCodeFromRemoteUrl(remoteUrl)));
+                KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type) ? deriveRepoCodeFromRemoteUrl(remoteUrl) : null));
         if (mapper.selectByRepoCode(repoCode) != null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repository directory name already exists");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repository config already exists");
         }
         Path repoPath = resolveRepoPath(repoCode);
-        if (Files.exists(repoPath)) {
-            if (!Files.isDirectory(repoPath.resolve(".git"))) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repository directory already exists and is not a Git repository");
-            }
-            if (!sameOriginRemoteUrl(repoPath, remoteUrl)) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repository directory already exists with different Git remote");
-            }
+        if (KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)) {
+            validateRemoteDirectory(repoPath, remoteUrl);
         }
-        try {
-            Files.createDirectories(repoPath);
-        } catch (IOException e) {
-            throw new IllegalStateException("创建知识库一级目录失败: " + repoPath, e);
-        }
+        ensureRepositoryDirectory(repoPath);
         long now = System.currentTimeMillis();
         KnowledgeRepositoryPo po = new KnowledgeRepositoryPo();
         po.setId(UUIDv7Utils.randomUUIDv7());
         po.setRepoCode(repoCode);
-        po.setProtocol(normalizeProtocol(request.getProtocol()));
-        po.setEnabled(!Boolean.FALSE.equals(request.getEnabled()));
-        po.setUpdateIntervalMinutes(normalizeInterval(request.getUpdateIntervalMinutes()));
+        applyConfig(po, request, type, remoteUrl, null, now);
         po.setStatus(KnowledgeRepositoryConstants.STATUS_IDLE);
-        po.setRemoteUrl(remoteUrl);
-        po.setDefaultBranch(StringUtils.trimToNull(request.getDefaultBranch()));
-        po.setProtocolConfig(toProtocolConfigJson(request.getProtocolConfig(), request.getDisplayName(), request.getCollectionAliases(), null));
-        po.setCredentialConfigCipher(resolveCredentialCipher(request.getCredentialConfig(), null));
         po.setCreatedAt(now);
-        po.setUpdatedAt(now);
         mapper.insert(po);
-        submitSync(po, "create");
-        return toDirectoryItem(repoPath, mapper.selectById(po.getId()));
+        if (KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)) {
+            submitSync(po, "create");
+        } else {
+            triggerKnowledgeSync("create-local", po.getRepoCode());
+        }
+        return toItem(mapper.selectById(po.getId()));
     }
 
     public KnowledgeRepositoryDtos.Item update(String id, KnowledgeRepositoryDtos.UpsertRequest request) {
-        KnowledgeRepositoryPo current = requireRemote(id);
+        KnowledgeRepositoryPo current = requireConfigured(id);
         if (StringUtils.isNotBlank(request.getRepoCode()) && !current.getRepoCode().equals(request.getRepoCode().trim())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repoCode cannot be changed");
         }
+        String type = StringUtils.defaultIfBlank(current.getType(), KnowledgeRepositoryConstants.TYPE_REMOTE);
+        if (StringUtils.isNotBlank(request.getType()) && !type.equals(normalizeType(request.getType()))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "type cannot be changed");
+        }
+        String remoteUrl = KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)
+                ? requireText(request.getRemoteUrl(), "remoteUrl")
+                : null;
         long now = System.currentTimeMillis();
-        current.setProtocol(normalizeProtocol(request.getProtocol()));
-        current.setEnabled(!Boolean.FALSE.equals(request.getEnabled()));
-        current.setUpdateIntervalMinutes(normalizeInterval(request.getUpdateIntervalMinutes()));
-        current.setRemoteUrl(requireText(request.getRemoteUrl(), "remoteUrl"));
-        current.setDefaultBranch(StringUtils.trimToNull(request.getDefaultBranch()));
-        current.setProtocolConfig(toProtocolConfigJson(request.getProtocolConfig(), request.getDisplayName(), request.getCollectionAliases(), current));
-        current.setCredentialConfigCipher(resolveCredentialCipher(request.getCredentialConfig(), current));
-        current.setUpdatedAt(now);
+        applyConfig(current, request, type, remoteUrl, current, now);
         mapper.updateConfig(current);
-        return toDirectoryItem(resolveRepoPath(current.getRepoCode()), mapper.selectById(id));
+        triggerKnowledgeSync("update", current.getRepoCode());
+        return toItem(mapper.selectById(id));
     }
 
     public void delete(String id) {
-        KnowledgeRepositoryPo po = requireRemote(id);
+        KnowledgeRepositoryPo po = requireConfigured(id);
         if (runningRepositoryCodes.contains(po.getRepoCode())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repository is syncing");
         }
         deleteRepositoryDirectory(resolveRepoPath(po.getRepoCode()));
         mapper.deleteById(po.getId());
-        KnowledgeRepoSyncOutcome outcome = maintenanceCoordinator.syncNowAsync(false);
-        if (!outcome.succeeded()) {
-            log.warn("删除远程知识库目录后提交增量同步失败: repoCode={}, message={}", po.getRepoCode(), outcome.message());
-        }
+        triggerKnowledgeSync("delete", po.getRepoCode());
     }
 
     public KnowledgeRepositoryDtos.SyncResponse syncNow(String id) {
-        return submitSync(requireRemote(id), "manual");
+        KnowledgeRepositoryPo po = requireConfigured(id);
+        if (KnowledgeRepositoryConstants.TYPE_REMOTE.equals(normalizeType(po.getType()))) {
+            return submitSync(po, "manual");
+        }
+        KnowledgeRepositoryDtos.SyncResponse response = new KnowledgeRepositoryDtos.SyncResponse();
+        KnowledgeRepoSyncOutcome outcome = maintenanceCoordinator.syncNowAsync(false);
+        response.setSuccess(outcome.succeeded());
+        response.setMessage(outcome.message());
+        return response;
     }
 
     @Scheduled(cron = "0 * * * * *")
     public void syncDueRepositories() {
         long now = System.currentTimeMillis();
-        for (KnowledgeRepositoryPo po : mapper.selectRemoteAll()) {
+        for (KnowledgeRepositoryPo po : mapper.selectDueRemote(now)) {
             if (!Boolean.TRUE.equals(po.getEnabled())) {
                 continue;
             }
@@ -207,6 +188,47 @@ public class KnowledgeRepositoryService {
             }
             submitSync(po, "schedule");
         }
+    }
+
+    private void applyConfig(KnowledgeRepositoryPo po,
+                             KnowledgeRepositoryDtos.UpsertRequest request,
+                             String type,
+                             String remoteUrl,
+                             KnowledgeRepositoryPo current,
+                             long now) {
+        String repoCode = po.getRepoCode();
+        po.setType(type);
+        po.setProtocol(KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type) ? normalizeProtocol(request.getProtocol()) : null);
+        po.setEnabled(!Boolean.FALSE.equals(request.getEnabled()));
+        po.setUpdateIntervalMinutes(normalizeInterval(request.getUpdateIntervalMinutes()));
+        po.setRemoteUrl(remoteUrl);
+        po.setDefaultBranch(KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)
+                ? StringUtils.trimToNull(request.getDefaultBranch())
+                : null);
+        po.setProtocolConfig(request.getProtocolConfig() == null
+                ? current == null ? "{}" : StringUtils.defaultIfBlank(current.getProtocolConfig(), "{}")
+                : JSON.toJSONString(request.getProtocolConfig()));
+        po.setDisplayName(StringUtils.trimToNull(request.getDisplayName()));
+        MetadataConfig currentMetadataConfig = parseMetadataConfig(current == null ? null : current.getMetadataConfig());
+        String collectionName = normalizeCollectionName(StringUtils.defaultIfBlank(
+                request.getCollectionName(),
+                current == null ? KnowledgeRepositoryConstants.defaultCollectionName(repoCode) : currentMetadataConfig.collectionName()));
+        List<String> partitionNames = request.getPartitionNames() == null && current != null
+                ? currentMetadataConfig.partitionNames()
+                : normalizePartitionNames(request.getPartitionNames());
+        int minHeadingLevel = request.getMinHeadingLevel() == null && current != null
+                ? normalizeMinHeadingLevel(currentMetadataConfig.minHeadingLevel())
+                : normalizeMinHeadingLevel(request.getMinHeadingLevel());
+        boolean filenameAsTitle = resolveFilenameAsTitle(request.getFilenameAsTitle(), currentMetadataConfig);
+        po.setMetadataConfig(toMetadataConfigJson(new MetadataConfig(
+                collectionName,
+                partitionNames,
+                minHeadingLevel,
+                filenameAsTitle)));
+        po.setCredentialConfigCipher(KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)
+                ? resolveCredentialCipher(request.getCredentialConfig(), current)
+                : null);
+        po.setUpdatedAt(now);
     }
 
     private KnowledgeRepositoryDtos.SyncResponse submitSync(KnowledgeRepositoryPo po, String trigger) {
@@ -266,99 +288,74 @@ public class KnowledgeRepositoryService {
         }
     }
 
-    private KnowledgeRepositoryDtos.Item toDirectoryItem(Path repoPath, KnowledgeRepositoryPo remoteConfig) {
-        String repoCode = repoPath.getFileName().toString();
-        RepoInfoSummary info = readRepoInfoSummary(repoPath);
+    private KnowledgeRepositoryDtos.Item toItem(KnowledgeRepositoryPo po) {
+        String type = normalizeType(po.getType());
+        Path repoPath = resolveRepoPath(po.getRepoCode());
         KnowledgeRepositoryDtos.Item item = new KnowledgeRepositoryDtos.Item();
-        item.setId(remoteConfig == null ? repoCode : remoteConfig.getId());
-        item.setRepoCode(repoCode);
-        item.setType(remoteConfig == null ? KnowledgeRepositoryConstants.TYPE_LOCAL_FILE : KnowledgeRepositoryConstants.TYPE_REMOTE);
-        item.setProtocol(remoteConfig == null ? null : remoteConfig.getProtocol());
-        item.setEnabled(remoteConfig == null || Boolean.TRUE.equals(remoteConfig.getEnabled()));
-        item.setReadonly(remoteConfig == null);
+        item.setId(po.getId());
+        item.setRepoCode(po.getRepoCode());
+        item.setType(type);
+        item.setProtocol(po.getProtocol());
+        item.setEnabled(po.getEnabled());
+        item.setReadonly(false);
         item.setLocalPath(repoPath.toAbsolutePath().normalize().toString());
-        item.setUpdateIntervalMinutes(remoteConfig == null ? null : remoteConfig.getUpdateIntervalMinutes());
-        item.setStatus(resolveDisplayStatus(repoPath, remoteConfig));
-        item.setRemoteUrl(remoteConfig == null ? null : remoteConfig.getRemoteUrl());
-        item.setDefaultBranch(remoteConfig == null ? null : remoteConfig.getDefaultBranch());
-        item.setLastRevision(remoteConfig == null ? null : remoteConfig.getLastRevision());
-        item.setLastRevisionMessage(remoteConfig == null ? null : remoteConfig.getLastRevisionMessage());
-        item.setLastRevisionAuthor(remoteConfig == null ? null : remoteConfig.getLastRevisionAuthor());
-        item.setLastRevisionTime(remoteConfig == null ? null : remoteConfig.getLastRevisionTime());
-        item.setLastSyncTime(remoteConfig == null ? null : remoteConfig.getLastSyncTime());
-        item.setLastError(remoteConfig == null ? null : remoteConfig.getLastError());
-        Map<String, Object> protocolConfig = remoteConfig == null ? Map.of() : parseProtocolConfig(remoteConfig.getProtocolConfig());
-        item.setProtocolConfig(protocolConfig);
-        item.setHasCredential(remoteConfig != null && StringUtils.isNotBlank(remoteConfig.getCredentialConfigCipher()));
-        item.setCollections(info.collections());
-        item.setDisplayName(remoteConfig == null ? null : extractDisplayName(protocolConfig));
-        item.setCollectionAliases(remoteConfig == null ? Map.of() : extractCollectionAliases(protocolConfig));
-        item.setMinHeadingLevel(info.minHeadingLevel());
-        item.setFilenameAsTitle(info.filenameAsTitle());
+        item.setUpdateIntervalMinutes(po.getUpdateIntervalMinutes());
+        item.setStatus(resolveDisplayStatus(repoPath, po));
+        item.setRemoteUrl(po.getRemoteUrl());
+        item.setDefaultBranch(po.getDefaultBranch());
+        item.setLastRevision(po.getLastRevision());
+        item.setLastRevisionMessage(po.getLastRevisionMessage());
+        item.setLastRevisionAuthor(po.getLastRevisionAuthor());
+        item.setLastRevisionTime(po.getLastRevisionTime());
+        item.setLastSyncTime(po.getLastSyncTime());
+        item.setLastError(po.getLastError());
+        item.setProtocolConfig(parseProtocolConfig(po.getProtocolConfig()));
+        item.setHasCredential(StringUtils.isNotBlank(po.getCredentialConfigCipher()));
+        MetadataConfig metadataConfig = parseMetadataConfig(po.getMetadataConfig());
+        item.setCollections(StringUtils.isBlank(metadataConfig.collectionName()) ? List.of() : List.of(metadataConfig.collectionName()));
+        item.setDisplayName(po.getDisplayName());
+        item.setCollectionName(metadataConfig.collectionName());
+        item.setPartitionNames(metadataConfig.partitionNames());
+        item.setMinHeadingLevel(metadataConfig.minHeadingLevel());
+        item.setFilenameAsTitle(metadataConfig.filenameAsTitle());
         return item;
     }
 
-    private String resolveDisplayStatus(Path repoPath, KnowledgeRepositoryPo remoteConfig) {
-        if (remoteConfig == null) {
-            return KnowledgeRepositoryConstants.STATUS_SYNCED;
-        }
-        if (KnowledgeRepositoryConstants.STATUS_SYNCING.equals(remoteConfig.getStatus())) {
+    private String resolveDisplayStatus(Path repoPath, KnowledgeRepositoryPo po) {
+        if (KnowledgeRepositoryConstants.STATUS_SYNCING.equals(po.getStatus())) {
             return KnowledgeRepositoryConstants.STATUS_SYNCING;
         }
         if (!Files.isDirectory(repoPath)) {
             return KnowledgeRepositoryConstants.STATUS_DIRECTORY_MISSING;
         }
-        return StringUtils.defaultIfBlank(remoteConfig.getStatus(), KnowledgeRepositoryConstants.STATUS_IDLE);
+        return StringUtils.defaultIfBlank(po.getStatus(), KnowledgeRepositoryConstants.STATUS_IDLE);
     }
 
-    private List<Path> listTopLevelRepositoryDirs() {
-        Path rootPath = metadataService.getRepoRootPath();
-        if (rootPath == null || !Files.isDirectory(rootPath)) {
-            return List.of();
-        }
-        try (Stream<Path> stream = Files.list(rootPath)) {
-            return stream.filter(Files::isDirectory)
-                    .filter(path -> !path.getFileName().toString().startsWith("."))
-                    .toList();
-        } catch (IOException e) {
-            throw new IllegalStateException("扫描知识库一级目录失败", e);
-        }
-    }
-
-    private RepoInfoSummary readRepoInfoSummary(Path repoPath) {
-        Set<String> collections = new LinkedHashSet<>();
-        Integer minHeadingLevel = null;
-        Boolean filenameAsTitle = null;
-        if (!Files.isDirectory(repoPath)) {
-            return new RepoInfoSummary(
-                    List.of(),
-                    KnowledgeRepoMetadataService.DEFAULT_MIN_HEADING_LEVEL,
-                    KnowledgeRepoMetadataService.DEFAULT_FILENAME_AS_TITLE);
-        }
-        try (Stream<Path> stream = Files.walk(repoPath)) {
-            for (Path infoJsonPath : stream.filter(Files::isRegularFile)
-                    .filter(path -> "info.json".equals(path.getFileName().toString()))
-                    .sorted(Comparator.comparing(Path::toString))
-                    .toList()) {
-                JSONObject info = JSON.parseObject(Files.readString(infoJsonPath));
-                String collection = info.getString("collection_name");
-                if (StringUtils.isNotBlank(collection)) {
-                    collections.add(collection.trim());
-                }
-                if (minHeadingLevel == null) {
-                    minHeadingLevel = info.getInteger("min_heading_level");
-                }
-                if (filenameAsTitle == null && info.containsKey("filename_as_title")) {
-                    filenameAsTitle = info.getBoolean("filename_as_title");
-                }
+    private void validateRemoteDirectory(Path repoPath, String remoteUrl) {
+        if (Files.exists(repoPath)) {
+            if (!Files.isDirectory(repoPath.resolve(".git"))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repository directory already exists and is not a Git repository");
             }
-        } catch (IOException e) {
-            throw new IllegalStateException("读取知识库 info.json 失败: " + repoPath, e);
+            if (!sameOriginRemoteUrl(repoPath, remoteUrl)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repository directory already exists with different Git remote");
+            }
         }
-        return new RepoInfoSummary(
-                new ArrayList<>(collections),
-                minHeadingLevel == null ? KnowledgeRepoMetadataService.DEFAULT_MIN_HEADING_LEVEL : minHeadingLevel,
-                filenameAsTitle == null ? KnowledgeRepoMetadataService.DEFAULT_FILENAME_AS_TITLE : filenameAsTitle);
+    }
+
+    private void ensureRepositoryDirectory(Path repoPath) {
+        try {
+            Files.createDirectories(repoPath);
+        } catch (IOException e) {
+            throw new IllegalStateException("创建知识库一级目录失败: " + repoPath, e);
+        }
+    }
+
+    private void triggerKnowledgeSync(String trigger, String repoCode) {
+        KnowledgeRepoSyncOutcome outcome = maintenanceCoordinator.syncNowAsync(false);
+        if (!outcome.succeeded()) {
+            log.warn("知识库配置变更后提交增量同步失败: trigger={}, repoCode={}, message={}",
+                    trigger, repoCode, outcome.message());
+        }
     }
 
     private String resolveCredentialCipher(KnowledgeRepositoryDtos.CredentialConfig request,
@@ -370,34 +367,6 @@ public class KnowledgeRepositoryService {
         return current == null ? null : current.getCredentialConfigCipher();
     }
 
-    private String toProtocolConfigJson(Map<String, Object> protocolConfig,
-                                        String displayName,
-                                        Map<String, String> collectionAliases,
-                                        KnowledgeRepositoryPo current) {
-        if (protocolConfig == null && displayName == null && collectionAliases == null) {
-            return current == null ? "{}" : StringUtils.defaultIfBlank(current.getProtocolConfig(), "{}");
-        }
-        Map<String, Object> next = protocolConfig == null
-                ? new LinkedHashMap<>(parseProtocolConfig(current == null ? null : current.getProtocolConfig()))
-                : new LinkedHashMap<>(protocolConfig);
-        String normalizedDisplayName = displayName == null ? extractDisplayName(next) : StringUtils.trimToNull(displayName);
-        next.remove(LEGACY_ALIAS_CONFIG_KEY);
-        if (normalizedDisplayName == null) {
-            next.remove(DISPLAY_NAME_CONFIG_KEY);
-        } else {
-            next.put(DISPLAY_NAME_CONFIG_KEY, normalizedDisplayName);
-        }
-        Map<String, String> aliases = collectionAliases == null
-                ? extractCollectionAliases(next)
-                : normalizeCollectionAliases(collectionAliases);
-        if (aliases.isEmpty()) {
-            next.remove(COLLECTION_ALIASES_CONFIG_KEY);
-        } else {
-            next.put(COLLECTION_ALIASES_CONFIG_KEY, aliases);
-        }
-        return JSON.toJSONString(next);
-    }
-
     private Map<String, Object> parseProtocolConfig(String json) {
         if (StringUtils.isBlank(json)) {
             return Map.of();
@@ -405,56 +374,10 @@ public class KnowledgeRepositoryService {
         return new LinkedHashMap<>(JSON.parseObject(json));
     }
 
-    private String extractDisplayName(Map<String, Object> protocolConfig) {
-        if (protocolConfig == null || protocolConfig.isEmpty()) {
-            return null;
-        }
-        Object raw = protocolConfig.get(DISPLAY_NAME_CONFIG_KEY);
-        if (raw == null) {
-            raw = protocolConfig.get(LEGACY_ALIAS_CONFIG_KEY);
-        }
-        return raw == null ? null : StringUtils.trimToNull(raw.toString());
-    }
-
-    private Map<String, String> extractCollectionAliases(Map<String, Object> protocolConfig) {
-        if (protocolConfig == null || protocolConfig.isEmpty()) {
-            return Map.of();
-        }
-        Object raw = protocolConfig.get(COLLECTION_ALIASES_CONFIG_KEY);
-        if (raw == null) {
-            return Map.of();
-        }
-        if (raw instanceof Map<?, ?> rawMap) {
-            Map<String, String> aliases = new LinkedHashMap<>();
-            rawMap.forEach((key, value) -> {
-                String collection = key == null ? null : key.toString();
-                String alias = value == null ? null : value.toString();
-                if (StringUtils.isNotBlank(collection) && StringUtils.isNotBlank(alias)) {
-                    aliases.put(collection.trim(), alias.trim());
-                }
-            });
-            return aliases;
-        }
-        return Map.of();
-    }
-
-    private Map<String, String> normalizeCollectionAliases(Map<String, String> collectionAliases) {
-        if (collectionAliases == null || collectionAliases.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, String> aliases = new LinkedHashMap<>();
-        collectionAliases.forEach((collection, alias) -> {
-            if (StringUtils.isNotBlank(collection) && StringUtils.isNotBlank(alias)) {
-                aliases.put(collection.trim(), alias.trim());
-            }
-        });
-        return aliases;
-    }
-
-    private KnowledgeRepositoryPo requireRemote(String id) {
+    private KnowledgeRepositoryPo requireConfigured(String id) {
         KnowledgeRepositoryPo po = mapper.selectById(id);
         if (po == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "knowledge repository remote config not found");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "knowledge repository config not found");
         }
         return po;
     }
@@ -492,10 +415,30 @@ public class KnowledgeRepositoryService {
         }
     }
 
+    private String normalizeType(String type) {
+        String normalized = StringUtils.defaultIfBlank(type, KnowledgeRepositoryConstants.TYPE_REMOTE)
+                .trim()
+                .toUpperCase(Locale.ROOT);
+        if (!KnowledgeRepositoryConstants.TYPE_REMOTE.equals(normalized)
+                && !KnowledgeRepositoryConstants.TYPE_LOCAL_FILE.equals(normalized)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "type must be LOCAL_FILE or REMOTE");
+        }
+        return normalized;
+    }
+
     private String normalizeRepoCode(String repoCode) {
         String normalized = requireText(repoCode, "repoCode").trim();
-        if (!normalized.matches("[A-Za-z0-9][A-Za-z0-9_-]{1,127}")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repoCode must match [A-Za-z0-9][A-Za-z0-9_-]{1,127}");
+        if (normalized.length() > 128 || ".".equals(normalized) || "..".equals(normalized)
+                || normalized.contains("/") || normalized.contains("\\")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repoCode must be a valid first-level directory name");
+        }
+        return normalized;
+    }
+
+    private String normalizeCollectionName(String collectionName) {
+        String normalized = requireText(collectionName, "collectionName").trim();
+        if (!normalized.matches("[A-Za-z_][A-Za-z0-9_]{0,127}")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "collectionName must match [A-Za-z_][A-Za-z0-9_]{0,127}");
         }
         return normalized;
     }
@@ -541,6 +484,88 @@ public class KnowledgeRepositoryService {
         return Math.max(1, interval);
     }
 
+    private int normalizeMinHeadingLevel(Integer minHeadingLevel) {
+        if (minHeadingLevel == null) {
+            return KnowledgeRepositoryConstants.DEFAULT_MIN_HEADING_LEVEL;
+        }
+        if (minHeadingLevel < 1 || minHeadingLevel > 3) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "minHeadingLevel must be between 1 and 3");
+        }
+        return minHeadingLevel;
+    }
+
+    private boolean resolveFilenameAsTitle(Boolean requested, MetadataConfig current) {
+        if (requested != null) {
+            return requested;
+        }
+        if (current != null && current.filenameAsTitle() != null) {
+            return current.filenameAsTitle();
+        }
+        return KnowledgeRepositoryConstants.DEFAULT_FILENAME_AS_TITLE;
+    }
+
+    private String toMetadataConfigJson(MetadataConfig config) {
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("collectionName", config.collectionName());
+        json.put("partitionNames", config.partitionNames());
+        json.put("minHeadingLevel", config.minHeadingLevel());
+        json.put("filenameAsTitle", config.filenameAsTitle());
+        return JSON.toJSONString(json);
+    }
+
+    private MetadataConfig parseMetadataConfig(String json) {
+        if (StringUtils.isBlank(json)) {
+            return new MetadataConfig(
+                    null,
+                    List.of(),
+                    KnowledgeRepositoryConstants.DEFAULT_MIN_HEADING_LEVEL,
+                    KnowledgeRepositoryConstants.DEFAULT_FILENAME_AS_TITLE);
+        }
+        Map<String, Object> config = JSON.parseObject(json);
+        return new MetadataConfig(
+                StringUtils.trimToNull((String) config.get("collectionName")),
+                parsePartitionNames(config.get("partitionNames")),
+                normalizeMinHeadingLevel(toInteger(config.get("minHeadingLevel"))),
+                config.containsKey("filenameAsTitle")
+                        ? Boolean.parseBoolean(String.valueOf(config.get("filenameAsTitle")))
+                        : KnowledgeRepositoryConstants.DEFAULT_FILENAME_AS_TITLE);
+    }
+
+    private List<String> parsePartitionNames(Object raw) {
+        if (raw == null) {
+            return List.of();
+        }
+        return normalizePartitionNames(JSON.parseArray(JSON.toJSONString(raw), String.class));
+    }
+
+    private Integer toInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        return Integer.parseInt(String.valueOf(value));
+    }
+
+    private List<String> normalizePartitionNames(List<String> partitionNames) {
+        if (partitionNames == null || partitionNames.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (String raw : partitionNames) {
+            if (StringUtils.isBlank(raw)) {
+                continue;
+            }
+            String name = raw.trim();
+            if (!name.matches("[A-Za-z_][A-Za-z0-9_]{0,127}")) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "partitionNames must match [A-Za-z_][A-Za-z0-9_]{0,127}");
+            }
+            names.add(name);
+        }
+        return new ArrayList<>(names);
+    }
+
     private String requireText(String value, String fieldName) {
         if (StringUtils.isBlank(value)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + " is required");
@@ -548,8 +573,9 @@ public class KnowledgeRepositoryService {
         return value.trim();
     }
 
-    private record RepoInfoSummary(
-            List<String> collections,
+    private record MetadataConfig(
+            String collectionName,
+            List<String> partitionNames,
             Integer minHeadingLevel,
             Boolean filenameAsTitle
     ) {

@@ -4,56 +4,45 @@ import io.github.jerryt92.j2agent.config.rag.KnowledgeRepoProperties;
 import io.github.jerryt92.j2agent.mapper.KnowledgeRepositoryMapper;
 import io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo;
 import io.github.jerryt92.j2agent.model.repository.KnowledgeRepositoryDtos;
-import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMetadataService;
+import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMaintenanceCoordinator;
+import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoSyncOutcome;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KnowledgeRepositoryServiceListTest {
     @TempDir
     Path tempDir;
 
     @Test
-    void listUsesTopLevelDirectoriesAndInfoJson() throws Exception {
-        Path root = tempDir.resolve("knowledge-repo");
-        Path local = root.resolve("local_kb");
-        Path remote = root.resolve("remote_kb");
-        Files.createDirectories(local);
-        Files.createDirectories(remote);
-        Files.writeString(local.resolve("info.json"), """
-                {"collection_name":"local_collection","min_heading_level":2,"filename_as_title":true}
-                """, StandardCharsets.UTF_8);
-        Files.writeString(remote.resolve("info.json"), """
-                {"collection_name":"remote_collection","min_heading_level":3,"filename_as_title":false}
-                """, StandardCharsets.UTF_8);
+    void listUsesConfiguredRepositoriesOnly() {
+        KnowledgeRepositoryPo localConfig = configured(
+                "local-id",
+                "local_kb",
+                KnowledgeRepositoryConstants.TYPE_LOCAL_FILE,
+                null,
+                "local_collection");
+        localConfig.setMetadataConfig(metadataConfig("local_collection", "[]", 2, true));
 
-        KnowledgeRepositoryPo remoteConfig = new KnowledgeRepositoryPo();
-        remoteConfig.setId("remote-id");
-        remoteConfig.setRepoCode("remote_kb");
-        remoteConfig.setProtocol("GIT");
-        remoteConfig.setEnabled(true);
-        remoteConfig.setStatus("SYNCED");
-        remoteConfig.setRemoteUrl("https://example.com/repo.git");
+        KnowledgeRepositoryPo remoteConfig = configured(
+                "remote-id",
+                "remote_kb",
+                KnowledgeRepositoryConstants.TYPE_REMOTE,
+                "https://example.com/repo.git",
+                "remote_collection");
         remoteConfig.setDefaultBranch("main");
         remoteConfig.setUpdateIntervalMinutes(60);
-        KnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper(List.of(remoteConfig));
+        remoteConfig.setMetadataConfig(metadataConfig("remote_collection", "[\"_default\"]", 3, true));
 
-        KnowledgeRepoProperties properties = new KnowledgeRepoProperties();
-        properties.setRootPath(root.toString());
-        KnowledgeRepoMetadataService metadataService = new KnowledgeRepoMetadataService(properties);
-        metadataService.init();
-        KnowledgeRepositoryCredentialCipher cipher = new KnowledgeRepositoryCredentialCipher(properties);
-        KnowledgeRepositoryService service = new KnowledgeRepositoryService(
-                mapper, properties, metadataService, null, cipher, List.of());
+        KnowledgeRepositoryService service = service(new FakeKnowledgeRepositoryMapper(List.of(localConfig, remoteConfig)));
 
         List<KnowledgeRepositoryDtos.Item> items = service.list().getData();
 
@@ -61,56 +50,104 @@ class KnowledgeRepositoryServiceListTest {
         KnowledgeRepositoryDtos.Item localItem = items.get(0);
         KnowledgeRepositoryDtos.Item remoteItem = items.get(1);
         assertEquals("local_kb", localItem.getRepoCode());
+        assertEquals("LOCAL_FILE", localItem.getType());
         assertEquals(List.of("local_collection"), localItem.getCollections());
+        assertEquals("local_collection", localItem.getCollectionName());
         assertEquals(2, localItem.getMinHeadingLevel());
-        assertTrue(localItem.getFilenameAsTitle());
-        assertTrue(localItem.getReadonly());
+        assertFalse(localItem.getReadonly());
         assertEquals("remote_kb", remoteItem.getRepoCode());
+        assertEquals("REMOTE", remoteItem.getType());
         assertEquals(List.of("remote_collection"), remoteItem.getCollections());
-        assertFalse(remoteItem.getReadonly());
+        assertEquals(List.of("_default"), remoteItem.getPartitionNames());
         assertEquals("GIT", remoteItem.getProtocol());
+        assertEquals("https://example.com/repo.git", remoteItem.getRemoteUrl());
     }
 
     @Test
-    void listIncludesRemoteConfigWhenDirectoryMissing() throws Exception {
-        Path root = tempDir.resolve("knowledge-repo");
-        Path local = root.resolve("local_kb");
-        Files.createDirectories(local);
-        Files.writeString(local.resolve("info.json"), """
-                {"collection_name":"local_collection"}
-                """, StandardCharsets.UTF_8);
+    void listShowsDirectoryMissingForConfiguredPathWithoutDirectory() {
+        KnowledgeRepositoryPo missingConfig = configured(
+                "missing-id",
+                "missing_remote",
+                KnowledgeRepositoryConstants.TYPE_REMOTE,
+                "https://example.com/missing.git",
+                "kb_missing_remote");
+        KnowledgeRepositoryService service = service(new FakeKnowledgeRepositoryMapper(List.of(missingConfig)));
 
-        KnowledgeRepositoryPo missingRemoteConfig = new KnowledgeRepositoryPo();
-        missingRemoteConfig.setId("missing-id");
-        missingRemoteConfig.setRepoCode("missing_remote");
-        missingRemoteConfig.setProtocol("GIT");
-        missingRemoteConfig.setEnabled(true);
-        missingRemoteConfig.setStatus("SYNCED");
-        missingRemoteConfig.setRemoteUrl("https://example.com/missing.git");
-        missingRemoteConfig.setUpdateIntervalMinutes(60);
-        KnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper(List.of(missingRemoteConfig));
+        KnowledgeRepositoryDtos.Item item = service.list().getData().getFirst();
 
+        assertEquals("missing-id", item.getId());
+        assertEquals("missing_remote", item.getRepoCode());
+        assertEquals("DIRECTORY_MISSING", item.getStatus());
+        assertEquals(List.of("kb_missing_remote"), item.getCollections());
+        assertEquals("https://example.com/missing.git", item.getRemoteUrl());
+        assertFalse(item.getReadonly());
+        assertEquals("kb_missing_remote", item.getCollectionName());
+    }
+
+    @Test
+    void listAutoCreatesLocalFileRepositoryForExistingTopLevelDirectory() throws IOException {
+        Path rootPath = tempDir.resolve("knowledge-repo");
+        Files.createDirectories(rootPath.resolve("local_docs"));
+        FakeKnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper(new ArrayList<>());
+        KnowledgeRepositoryService service = service(mapper);
+
+        KnowledgeRepositoryDtos.Item item = service.list().getData().getFirst();
+
+        assertEquals("local_docs", item.getRepoCode());
+        assertEquals(KnowledgeRepositoryConstants.TYPE_LOCAL_FILE, item.getType());
+        assertEquals(List.of("kb_local_docs"), item.getCollections());
+        assertEquals(List.of(), item.getPartitionNames());
+        assertEquals(3, item.getMinHeadingLevel());
+        assertEquals(true, item.getFilenameAsTitle());
+        assertEquals(1, mapper.rows.size());
+    }
+
+    @Test
+    void deleteLocalFileRepositoryDeletesDirectoryAndConfig() throws IOException {
+        Path rootPath = tempDir.resolve("knowledge-repo");
+        Files.createDirectories(rootPath.resolve("local_docs"));
+        Files.writeString(rootPath.resolve("local_docs").resolve("guide.md"), "# Guide\n");
+        KnowledgeRepositoryPo localConfig = configured(
+                "local-id",
+                "local_docs",
+                KnowledgeRepositoryConstants.TYPE_LOCAL_FILE,
+                null,
+                "kb_local_docs");
+        FakeKnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper(new ArrayList<>(List.of(localConfig)));
+        KnowledgeRepositoryService service = service(mapper);
+
+        service.delete("local-id");
+
+        assertFalse(Files.exists(rootPath.resolve("local_docs")));
+        assertEquals(0, mapper.rows.size());
+    }
+
+    private KnowledgeRepositoryService service(FakeKnowledgeRepositoryMapper mapper) {
         KnowledgeRepoProperties properties = new KnowledgeRepoProperties();
-        properties.setRootPath(root.toString());
-        KnowledgeRepoMetadataService metadataService = new KnowledgeRepoMetadataService(properties);
-        metadataService.init();
+        properties.setRootPath(tempDir.resolve("knowledge-repo").toString());
         KnowledgeRepositoryCredentialCipher cipher = new KnowledgeRepositoryCredentialCipher(properties);
-        KnowledgeRepositoryService service = new KnowledgeRepositoryService(
-                mapper, properties, metadataService, null, cipher, List.of());
+        KnowledgeRepositoryAutoRegistrar autoRegistrar = new KnowledgeRepositoryAutoRegistrar(mapper, properties);
+        return new KnowledgeRepositoryService(mapper, properties, new FakeKnowledgeRepoMaintenanceCoordinator(), cipher, autoRegistrar, List.of());
+    }
 
-        List<KnowledgeRepositoryDtos.Item> items = service.list().getData();
+    private KnowledgeRepositoryPo configured(String id, String repoCode, String type, String remoteUrl, String collection) {
+        KnowledgeRepositoryPo po = new KnowledgeRepositoryPo();
+        po.setId(id);
+        po.setRepoCode(repoCode);
+        po.setType(type);
+        po.setProtocol(KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type) ? "GIT" : null);
+        po.setEnabled(true);
+        po.setStatus("SYNCED");
+        po.setRemoteUrl(remoteUrl);
+        po.setUpdateIntervalMinutes(60);
+        po.setProtocolConfig("{}");
+        po.setMetadataConfig(metadataConfig(collection, "[]", 3, true));
+        return po;
+    }
 
-        assertEquals(2, items.size());
-        KnowledgeRepositoryDtos.Item missingItem = items.get(1);
-        assertEquals("missing-id", missingItem.getId());
-        assertEquals("missing_remote", missingItem.getRepoCode());
-        assertEquals("REMOTE", missingItem.getType());
-        assertEquals("GIT", missingItem.getProtocol());
-        assertEquals("DIRECTORY_MISSING", missingItem.getStatus());
-        assertFalse(missingItem.getReadonly());
-        assertEquals("https://example.com/missing.git", missingItem.getRemoteUrl());
-        assertEquals(List.of(), missingItem.getCollections());
-        assertTrue(missingItem.getLocalPath().endsWith("knowledge-repo/missing_remote"));
+    private String metadataConfig(String collection, String partitionsJson, int minHeadingLevel, boolean filenameAsTitle) {
+        return "{\"collectionName\":\"" + collection + "\",\"partitionNames\":" + partitionsJson
+                + ",\"minHeadingLevel\":" + minHeadingLevel + ",\"filenameAsTitle\":" + filenameAsTitle + "}";
     }
 
     private static class FakeKnowledgeRepositoryMapper implements KnowledgeRepositoryMapper {
@@ -127,7 +164,16 @@ class KnowledgeRepositoryServiceListTest {
 
         @Override
         public List<KnowledgeRepositoryPo> selectRemoteAll() {
-            return rows;
+            return rows.stream()
+                    .filter(row -> KnowledgeRepositoryConstants.TYPE_REMOTE.equals(row.getType()))
+                    .toList();
+        }
+
+        @Override
+        public List<KnowledgeRepositoryPo> selectEnabledAll() {
+            return rows.stream()
+                    .filter(row -> Boolean.TRUE.equals(row.getEnabled()))
+                    .toList();
         }
 
         @Override
@@ -142,12 +188,13 @@ class KnowledgeRepositoryServiceListTest {
 
         @Override
         public List<KnowledgeRepositoryPo> selectDueRemote(long dueBefore) {
-            return rows;
+            return selectRemoteAll();
         }
 
         @Override
         public int insert(KnowledgeRepositoryPo po) {
-            throw new UnsupportedOperationException();
+            rows.add(po);
+            return 1;
         }
 
         @Override
@@ -167,7 +214,18 @@ class KnowledgeRepositoryServiceListTest {
 
         @Override
         public int deleteById(String id) {
-            throw new UnsupportedOperationException();
+            return rows.removeIf(row -> id.equals(row.getId())) ? 1 : 0;
+        }
+    }
+
+    private static class FakeKnowledgeRepoMaintenanceCoordinator extends KnowledgeRepoMaintenanceCoordinator {
+        private FakeKnowledgeRepoMaintenanceCoordinator() {
+            super(null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        public KnowledgeRepoSyncOutcome syncNowAsync(boolean fullRebuild) {
+            return KnowledgeRepoSyncOutcome.accepted("queued");
         }
     }
 }

@@ -37,7 +37,7 @@ public class KnowledgeRepoHashTreeService {
         for (KnowledgeSourceFileHashPo record : records) {
             if (STATUS_ACTIVE.equals(record.getSyncStatus())) {
                 snapshot.put(record.getFilePath(), KnowledgeRepoDiffHash.build(
-                        record.getFileSha256(), record.getInfoJsonHash(), record.getCollectionName()));
+                        record.getFileSha256(), record.getMetadataConfigHash(), record.getCollectionName()));
             }
         }
         return snapshot;
@@ -82,7 +82,7 @@ public class KnowledgeRepoHashTreeService {
     /**
      * 写入或更新 ACTIVE 文件状态（含 Milvus 分区配置 JSON）。
      */
-    public void upsertActive(Path filePath, String sha256, String infoJsonHash, String collectionName, List<String> partitionNames, int knowledgeCount, long fileSizeBytes, long scanTime) {
+    public void upsertActive(Path filePath, String sha256, String metadataConfigHash, String collectionName, List<String> partitionNames, int knowledgeCount, long fileSizeBytes, long scanTime) {
         KnowledgeSourceFileHashPo po = new KnowledgeSourceFileHashPo();
         String relativePath = normalizeRepoRelativePath(filePath);
         // 使用 UUIDv7 作为主键，避免自增主键在分布式场景下的冲突。
@@ -90,7 +90,7 @@ public class KnowledgeRepoHashTreeService {
         po.setFilePath(relativePath);
         po.setFilePathHash(calculatePathHash(relativePath));
         po.setFileSha256(sha256);
-        po.setInfoJsonHash(infoJsonHash);
+        po.setMetadataConfigHash(metadataConfigHash);
         po.setCollectionName(collectionName);
         po.setPartitionNamesJson(partitionNames == null || partitionNames.isEmpty() ? null : JSON.toJSONString(partitionNames));
         po.setKnowledgeCount(knowledgeCount);
@@ -137,4 +137,3 @@ public class KnowledgeRepoHashTreeService {
     }
 
 }
-

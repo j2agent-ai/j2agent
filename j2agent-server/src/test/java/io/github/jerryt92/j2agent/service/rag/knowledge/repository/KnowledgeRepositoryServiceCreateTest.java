@@ -5,7 +5,6 @@ import io.github.jerryt92.j2agent.mapper.KnowledgeRepositoryMapper;
 import io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo;
 import io.github.jerryt92.j2agent.model.repository.KnowledgeRepositoryDtos;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMaintenanceCoordinator;
-import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMetadataService;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoSyncOutcome;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -49,7 +48,7 @@ class KnowledgeRepositoryServiceCreateTest {
         ResponseStatusException error = assertThrows(ResponseStatusException.class,
                 () -> service.create(request("kb_docs", "https://example.com/new.git")));
 
-        assertEquals("repository directory name already exists", error.getReason());
+        assertEquals("repository config already exists", error.getReason());
     }
 
     @Test
@@ -61,25 +60,40 @@ class KnowledgeRepositoryServiceCreateTest {
         ResponseStatusException error = assertThrows(ResponseStatusException.class,
                 () -> service.create(request(null, "https://example.com/docs.git")));
 
-        assertEquals("repository directory name already exists", error.getReason());
+        assertEquals("repository config already exists", error.getReason());
+    }
+
+    @Test
+    void createAppliesAdvancedConfigDefaults() {
+        FakeKnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper();
+        KnowledgeRepositoryService service = service(mapper);
+
+        service.create(request("kb-docs", "https://example.com/docs.git"));
+
+        KnowledgeRepositoryPo po = mapper.rows.getFirst();
+        assertEquals(KnowledgeRepositoryConstants.TYPE_REMOTE, po.getType());
+        assertEquals("{\"collectionName\":\"kb_kb_docs\",\"partitionNames\":[],\"minHeadingLevel\":3,\"filenameAsTitle\":true}",
+                po.getMetadataConfig());
+        assertEquals(60, po.getUpdateIntervalMinutes());
+        assertEquals(true, po.getEnabled());
     }
 
     private KnowledgeRepositoryService service(FakeKnowledgeRepositoryMapper mapper) {
         KnowledgeRepoProperties properties = new KnowledgeRepoProperties();
         properties.setRootPath(tempDir.resolve("knowledge-repo").toString());
-        KnowledgeRepoMetadataService metadataService = new KnowledgeRepoMetadataService(properties);
-        metadataService.init();
         KnowledgeRepositoryCredentialCipher cipher = new KnowledgeRepositoryCredentialCipher(properties);
         KnowledgeRepoMaintenanceCoordinator coordinator = new FakeKnowledgeRepoMaintenanceCoordinator();
         KnowledgeRepositorySyncer syncer = new SuccessfulSyncer();
+        KnowledgeRepositoryAutoRegistrar autoRegistrar = new KnowledgeRepositoryAutoRegistrar(mapper, properties);
         return new KnowledgeRepositoryService(
-                mapper, properties, metadataService, coordinator, cipher, List.of(syncer));
+                mapper, properties, coordinator, cipher, autoRegistrar, List.of(syncer));
     }
 
     private KnowledgeRepositoryDtos.UpsertRequest request(String repoCode, String remoteUrl) {
         KnowledgeRepositoryDtos.UpsertRequest request = new KnowledgeRepositoryDtos.UpsertRequest();
         request.setRepoCode(repoCode);
         request.setRemoteUrl(remoteUrl);
+        request.setType(KnowledgeRepositoryConstants.TYPE_REMOTE);
         request.setProtocol("GIT");
         request.setEnabled(true);
         request.setUpdateIntervalMinutes(60);
@@ -91,10 +105,13 @@ class KnowledgeRepositoryServiceCreateTest {
         po.setId(repoCode + "-id");
         po.setRepoCode(repoCode);
         po.setProtocol("GIT");
+        po.setType(KnowledgeRepositoryConstants.TYPE_REMOTE);
         po.setEnabled(true);
         po.setStatus(KnowledgeRepositoryConstants.STATUS_IDLE);
         po.setRemoteUrl(remoteUrl);
         po.setUpdateIntervalMinutes(60);
+        po.setMetadataConfig("{\"collectionName\":\"kb_" + repoCode
+                + "\",\"partitionNames\":[],\"minHeadingLevel\":3,\"filenameAsTitle\":true}");
         return po;
     }
 
@@ -134,6 +151,11 @@ class KnowledgeRepositoryServiceCreateTest {
         @Override
         public List<KnowledgeRepositoryPo> selectRemoteAll() {
             return rows;
+        }
+
+        @Override
+        public List<KnowledgeRepositoryPo> selectEnabledAll() {
+            return rows.stream().filter(row -> Boolean.TRUE.equals(row.getEnabled())).toList();
         }
 
         @Override

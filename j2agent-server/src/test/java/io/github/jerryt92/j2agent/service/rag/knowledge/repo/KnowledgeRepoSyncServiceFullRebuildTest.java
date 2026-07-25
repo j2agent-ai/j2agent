@@ -103,8 +103,9 @@ class KnowledgeRepoSyncServiceFullRebuildTest {
         });
         when(metadataService.getRepoRootPath()).thenReturn(tempRepo);
         when(metadataService.listConfiguredCollectionNames()).thenReturn(Set.of("knowledge_collection"));
+        when(metadataService.listConfiguredRepositoryPaths()).thenReturn(List.of(tempRepo));
         when(metadataService.hasMetadata()).thenReturn(true);
-        when(metadataService.resolveInfoJsonHash(document)).thenReturn("info-hash");
+        when(metadataService.resolveMetadataConfigHash(document)).thenReturn("metadata-hash");
         when(metadataService.resolveCollection(document)).thenReturn("knowledge_collection");
         when(metadataService.resolvePartitionNames(document)).thenReturn(List.of("_default"));
         when(metadataService.resolveMinHeadingLevel(document)).thenReturn(1);
@@ -149,9 +150,10 @@ class KnowledgeRepoSyncServiceFullRebuildTest {
         Files.writeString(goodDocument, "# Good\na healthy document with more text");
         when(metadataService.getRepoRootPath()).thenReturn(tempRepo);
         when(metadataService.listConfiguredCollectionNames()).thenReturn(Set.of("knowledge_collection"));
+        when(metadataService.listConfiguredRepositoryPaths()).thenReturn(List.of(tempRepo));
         when(metadataService.hasMetadata()).thenReturn(true);
-        when(metadataService.resolveInfoJsonHash(badDocument)).thenReturn("info-hash");
-        when(metadataService.resolveInfoJsonHash(goodDocument)).thenReturn("info-hash");
+        when(metadataService.resolveMetadataConfigHash(badDocument)).thenReturn("metadata-hash");
+        when(metadataService.resolveMetadataConfigHash(goodDocument)).thenReturn("metadata-hash");
         when(metadataService.resolveCollection(badDocument)).thenReturn("knowledge_collection");
         when(metadataService.resolveCollection(goodDocument)).thenReturn("knowledge_collection");
         when(metadataService.resolvePartitionNames(badDocument)).thenReturn(List.of("_default"));
@@ -186,10 +188,10 @@ class KnowledgeRepoSyncServiceFullRebuildTest {
         verify(milvusKnowledgeWriteService).upsertTextChunks(
                 eq(goodChunks), eq("good.md"), anyString(), eq("knowledge_collection"), eq(List.of("_default")), any());
         verify(hashTreeService).upsertActive(
-                eq(Path.of("good.md")), anyString(), eq("info-hash"), eq("knowledge_collection"), eq(List.of("_default")),
+                eq(Path.of("good.md")), anyString(), eq("metadata-hash"), eq("knowledge_collection"), eq(List.of("_default")),
                 eq(0), eq(Files.size(goodDocument)), anyLong());
         verify(hashTreeService, never()).upsertActive(
-                eq(Path.of("bad.md")), anyString(), eq("info-hash"), eq("knowledge_collection"), eq(List.of("_default")),
+                eq(Path.of("bad.md")), anyString(), eq("metadata-hash"), eq("knowledge_collection"), eq(List.of("_default")),
                 eq(0), eq(Files.size(badDocument)), anyLong());
     }
 }

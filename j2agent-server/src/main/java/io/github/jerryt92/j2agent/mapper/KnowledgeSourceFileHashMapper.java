@@ -20,7 +20,7 @@ public interface KnowledgeSourceFileHashMapper {
      * 查询全部文件状态。
      */
     @Select("""
-            SELECT id, file_path, file_path_hash, file_sha256, info_json_hash, collection_name, partition_names AS partitionNamesJson, knowledge_count, file_size_bytes, last_scan_time, sync_status, created_at, updated_at
+            SELECT id, file_path, file_path_hash, file_sha256, metadata_config_hash AS metadataConfigHash, collection_name, partition_names AS partitionNamesJson, knowledge_count, file_size_bytes, last_scan_time, sync_status, created_at, updated_at
             FROM knowledge_source_file_hash
             """)
     List<KnowledgeSourceFileHashPo> selectAll();
@@ -51,12 +51,12 @@ public interface KnowledgeSourceFileHashMapper {
      */
     @Insert("""
             INSERT INTO knowledge_source_file_hash
-            (id, file_path, file_path_hash, file_sha256, info_json_hash, collection_name, partition_names, knowledge_count, file_size_bytes, last_scan_time, sync_status, created_at, updated_at)
+            (id, file_path, file_path_hash, file_sha256, metadata_config_hash, collection_name, partition_names, knowledge_count, file_size_bytes, last_scan_time, sync_status, created_at, updated_at)
             VALUES
-            (#{id}, #{filePath}, #{filePathHash}, #{fileSha256}, #{infoJsonHash}, #{collectionName}, #{partitionNamesJson}, #{knowledgeCount}, #{fileSizeBytes}, #{lastScanTime}, #{syncStatus}, #{createdAt}, #{updatedAt})
+            (#{id}, #{filePath}, #{filePathHash}, #{fileSha256}, #{metadataConfigHash}, #{collectionName}, #{partitionNamesJson}, #{knowledgeCount}, #{fileSizeBytes}, #{lastScanTime}, #{syncStatus}, #{createdAt}, #{updatedAt})
             ON CONFLICT (file_path_hash) DO UPDATE SET
               file_sha256 = EXCLUDED.file_sha256,
-              info_json_hash = EXCLUDED.info_json_hash,
+              metadata_config_hash = EXCLUDED.metadata_config_hash,
               collection_name = EXCLUDED.collection_name,
               partition_names = EXCLUDED.partition_names,
               knowledge_count = EXCLUDED.knowledge_count,
@@ -85,4 +85,3 @@ public interface KnowledgeSourceFileHashMapper {
     @Delete("DELETE FROM knowledge_source_file_hash")
     int deleteAll();
 }
-

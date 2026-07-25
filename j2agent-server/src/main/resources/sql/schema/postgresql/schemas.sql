@@ -139,7 +139,7 @@ CREATE TABLE knowledge_source_file_hash
     file_path       varchar(2048) NOT NULL,
     file_path_hash  char(64)      NOT NULL,
     file_sha256     char(64)      NOT NULL,
-    info_json_hash  char(64)      NOT NULL,
+    metadata_config_hash char(64) NOT NULL,
     collection_name varchar(128)  NOT NULL,
     partition_names varchar(2048) DEFAULT NULL,
     knowledge_count int           NOT NULL DEFAULT 0,
@@ -176,6 +176,7 @@ CREATE TABLE knowledge_repository
 (
     id                       varchar(32)   NOT NULL,
     repo_code                varchar(128)  NOT NULL,
+    type                     varchar(32)   NOT NULL DEFAULT 'REMOTE',
     protocol                 varchar(32)   DEFAULT NULL,
     enabled                  boolean       NOT NULL DEFAULT true,
     update_interval_minutes  int           NOT NULL DEFAULT 60,
@@ -189,6 +190,8 @@ CREATE TABLE knowledge_repository
     last_sync_time           bigint        DEFAULT NULL,
     last_error               text          DEFAULT NULL,
     protocol_config          jsonb         DEFAULT '{}'::jsonb,
+    display_name             varchar(128)  DEFAULT NULL,
+    metadata_config          jsonb         NOT NULL DEFAULT '{}'::jsonb,
     credential_config_cipher text          DEFAULT NULL,
     created_at               bigint        NOT NULL,
     updated_at               bigint        NOT NULL,
@@ -197,4 +200,5 @@ CREATE TABLE knowledge_repository
 );
 
 CREATE INDEX idx_knowledge_repository_protocol ON knowledge_repository (protocol);
+CREATE INDEX idx_knowledge_repository_type ON knowledge_repository (type);
 CREATE INDEX idx_knowledge_repository_due ON knowledge_repository (enabled, status, last_sync_time);

@@ -91,10 +91,10 @@ public class KnowledgeService {
                 .sorted()
                 .toList();
         for (String collection : fallbackCollections) {
-            result.add(new KnowledgeCollectionDto()
-                    .collection(collection)
-                    .selectionValue(collection)
-                    .name(EMPTY_REPOSITORY_NAME_PLACEHOLDER));
+            KnowledgeCollectionDto dto = new KnowledgeCollectionDto();
+            dto.setCollection(collection);
+            dto.setName(EMPTY_REPOSITORY_NAME_PLACEHOLDER);
+            result.add(dto);
         }
         return result;
     }
@@ -128,17 +128,17 @@ public class KnowledgeService {
         private CollectionOption addRepository(KnowledgeRepositoryDtos.Item repository) {
             String repositoryName = StringUtils.defaultIfBlank(
                     StringUtils.trimToNull(repository.getDisplayName()),
-                    EMPTY_REPOSITORY_NAME_PLACEHOLDER);
+                    StringUtils.defaultIfBlank(repository.getRepoCode(), EMPTY_REPOSITORY_NAME_PLACEHOLDER));
             repositoryNames.add(repositoryName);
             return this;
         }
 
         private KnowledgeCollectionDto toDto() {
             String name = String.join(", ", repositoryNames);
-            return new KnowledgeCollectionDto()
-                    .collection(collection)
-                    .selectionValue(collection)
-                    .name(name);
+            KnowledgeCollectionDto dto = new KnowledgeCollectionDto();
+            dto.setCollection(collection);
+            dto.setName(name);
+            return dto;
         }
     }
 

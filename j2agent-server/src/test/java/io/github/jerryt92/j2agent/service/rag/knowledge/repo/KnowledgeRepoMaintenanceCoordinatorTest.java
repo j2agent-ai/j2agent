@@ -118,7 +118,6 @@ class KnowledgeRepoMaintenanceCoordinatorTest {
     @Test
     void requestStartupInit_whenProbeFails_doesNotStartWatch() throws Exception {
         when(metadataService.getRepoRootPath()).thenReturn(tempRepo);
-        when(properties.isWatchEnabled()).thenReturn(true);
         when(lockService.repoRootHash(tempRepo)).thenReturn("repo-hash");
         when(embeddingService.hasActiveEmbeddingConfig()).thenReturn(true);
         when(embeddingService.getLastProbeError()).thenReturn("Embedding 不可用");
@@ -248,6 +247,7 @@ class KnowledgeRepoMaintenanceCoordinatorTest {
     void syncNowAsync_whenAccepted_returnsImmediatelyWhileTaskRuns() throws Exception {
         when(metadataService.getRepoRootPath()).thenReturn(tempRepo);
         when(lockService.repoRootHash(tempRepo)).thenReturn("repo-hash");
+        when(embeddingService.isReady()).thenReturn(true);
         CountDownLatch incrementalStarted = new CountDownLatch(1);
         CountDownLatch allowFinish = new CountDownLatch(1);
         doAnswer(invocation -> {

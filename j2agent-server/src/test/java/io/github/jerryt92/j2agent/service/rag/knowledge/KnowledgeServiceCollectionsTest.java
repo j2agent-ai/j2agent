@@ -28,7 +28,6 @@ class KnowledgeServiceCollectionsTest {
                 .map(item -> item.getCollection())
                 .toList());
         assertEquals("研发Wiki", result.getFirst().getName());
-        assertEquals("rc_wiki", result.getFirst().getSelectionValue());
     }
 
     @Test
@@ -57,11 +56,8 @@ class KnowledgeServiceCollectionsTest {
         assertEquals(List.of("knowledge_base"), result.stream()
                 .map(KnowledgeCollectionDto::getCollection)
                 .toList());
-        assertEquals(List.of("J2Agent 平台系统文档, --, 自定义系统文档"), result.stream()
+        assertEquals(List.of("J2Agent 平台系统文档, knowledge_base, 自定义系统文档"), result.stream()
                 .map(KnowledgeCollectionDto::getName)
-                .toList());
-        assertEquals(List.of("knowledge_base"), result.stream()
-                .map(KnowledgeCollectionDto::getSelectionValue)
                 .toList());
     }
 
@@ -79,7 +75,7 @@ class KnowledgeServiceCollectionsTest {
         assertEquals(List.of("knowledge_base"), result.stream()
                 .map(KnowledgeCollectionDto::getCollection)
                 .toList());
-        assertEquals(List.of("--"), result.stream()
+        assertEquals(List.of("knowledge_base"), result.stream()
                 .map(KnowledgeCollectionDto::getName)
                 .toList());
     }

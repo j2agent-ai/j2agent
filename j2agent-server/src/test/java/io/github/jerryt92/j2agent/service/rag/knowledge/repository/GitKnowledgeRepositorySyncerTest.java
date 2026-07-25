@@ -26,8 +26,7 @@ class GitKnowledgeRepositorySyncerTest {
         Path local = tempDir.resolve("knowledge-repo").resolve("repo");
         Files.createDirectories(remote);
         try (Git git = Git.init().setDirectory(remote.toFile()).setInitialBranch("main").call()) {
-            Files.writeString(remote.resolve("info.json"), "{\"collection_name\":\"kb\"}", StandardCharsets.UTF_8);
-            Files.writeString(remote.resolve("doc.md"), "# Title\n\n### A\n\nBody", StandardCharsets.UTF_8);
+            Files.writeString(remote.resolve("doc.md"), "# Title\n\n### A\n\nBody");
             git.add().addFilepattern(".").call();
             git.commit().setMessage("initial").setAuthor("Tester", "test@example.com").call();
         }

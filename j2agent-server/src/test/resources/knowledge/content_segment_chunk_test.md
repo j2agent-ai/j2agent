@@ -4,7 +4,7 @@
 
 ## 使用方式
 
-1. 将本文件放入知识库目录（需有 `info.json`，默认 `min_heading_level=3`）。
+1. 将本文件放入已在“知识库列表”中配置的知识库目录（默认 `metadata_config.minHeadingLevel=3`）。
 2. 确认 `application.yaml` 中 `content-segment-chars: 2000`、`content-segment-overlap-chars: 200`。
 3. 触发 sync 或完全重建后，在 Milvus / 日志中检查向量条数。
 

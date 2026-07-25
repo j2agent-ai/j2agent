@@ -1,16 +1,18 @@
 package io.github.jerryt92.j2agent.service.llm.agent.builtin.knowledgeqa;
 
 import io.github.jerryt92.j2agent.config.rag.KnowledgeRepoProperties;
+import io.github.jerryt92.j2agent.mapper.KnowledgeRepositoryMapper;
+import io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunnableContextKeys;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeMarkdownImageRewriter;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMetadataService;
+import io.github.jerryt92.j2agent.service.rag.knowledge.repository.KnowledgeRepositoryAutoRegistrar;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.ai.chat.model.ToolContext;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -18,6 +20,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 知识库问答专用 grep/read 工具范围约束测试。
@@ -38,7 +42,12 @@ class KnowledgeQaGrepToolTest {
 
         KnowledgeRepoProperties properties = new KnowledgeRepoProperties();
         properties.setRootPath(tempDir.toString());
-        KnowledgeRepoMetadataService metadataService = new KnowledgeRepoMetadataService(properties);
+        KnowledgeRepositoryMapper mapper = mock(KnowledgeRepositoryMapper.class);
+        when(mapper.selectEnabledAll()).thenReturn(List.of(
+                repository("knowledge_base", "knowledge_base"),
+                repository("intelligent_report_kb", "intelligent_report_kb")));
+        KnowledgeRepoMetadataService metadataService = new KnowledgeRepoMetadataService(
+                properties, mapper, new KnowledgeRepositoryAutoRegistrar(mapper, properties));
         metadataService.init();
         tool = new KnowledgeQaGrepTool(metadataService, new KnowledgeMarkdownImageRewriter());
     }
@@ -98,12 +107,18 @@ class KnowledgeQaGrepToolTest {
     private void writeKnowledgeRepo(String dir, String collection, String relativeFile, String content) throws IOException {
         Path repoDir = tempDir.resolve(dir);
         Files.createDirectories(repoDir);
-        Files.writeString(repoDir.resolve("info.json"),
-                "{\"collection_name\":\"" + collection + "\",\"min_heading_level\":2}",
-                StandardCharsets.UTF_8);
         Path md = repoDir.resolve(relativeFile);
         Files.createDirectories(md.getParent());
-        Files.writeString(md, content, StandardCharsets.UTF_8);
+        Files.writeString(md, content);
+    }
+
+    private KnowledgeRepositoryPo repository(String repoCode, String collection) {
+        KnowledgeRepositoryPo po = new KnowledgeRepositoryPo();
+        po.setRepoCode(repoCode);
+        po.setEnabled(true);
+        po.setMetadataConfig("{\"collectionName\":\"" + collection
+                + "\",\"partitionNames\":[],\"minHeadingLevel\":2,\"filenameAsTitle\":true}");
+        return po;
     }
 
     private ToolContext context(String... collections) {

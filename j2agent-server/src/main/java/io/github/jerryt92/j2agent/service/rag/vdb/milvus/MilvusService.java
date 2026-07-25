@@ -173,7 +173,7 @@ public class MilvusService implements VectorDatabaseService {
     }
 
     /**
-     * 按指定 collection 写入向量，可选按 info.json 声明创建分区并写入首分区。
+     * 按指定 collection 写入向量，可选按知识库高级配置创建分区并写入首分区。
      */
     @Override
     public void putData(String targetCollectionName, List<KnowledgeVectorBo> knowledgeVectors, List<String> partitionNames) {
