@@ -40,7 +40,8 @@ public final class KnowledgeRepositoryDtos {
         private Boolean hasCredential;
         private List<String> collections;
         private String displayName;
-        private Map<String, String> collectionAliases;
+        private String collectionName;
+        private List<String> partitionNames;
         private Integer minHeadingLevel;
         private Boolean filenameAsTitle;
     }
@@ -48,6 +49,7 @@ public final class KnowledgeRepositoryDtos {
     @Data
     public static class UpsertRequest {
         private String repoCode;
+        private String type;
         private String protocol;
         private Boolean enabled;
         private Integer updateIntervalMinutes;
@@ -55,8 +57,11 @@ public final class KnowledgeRepositoryDtos {
         private String defaultBranch;
         private Map<String, Object> protocolConfig;
         private String displayName;
-        private Map<String, String> collectionAliases;
+        private String collectionName;
+        private List<String> partitionNames;
         private CredentialConfig credentialConfig;
+        private Integer minHeadingLevel;
+        private Boolean filenameAsTitle;
     }
 
     @Data

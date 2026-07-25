@@ -1,5 +1,6 @@
 package io.github.jerryt92.j2agent.service.llm.agent.builtin;
 
+import io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent.UniversalAssistantAgent;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;

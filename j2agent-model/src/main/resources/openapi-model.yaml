@@ -515,9 +515,12 @@ components:
         collection:
           type: string
           description: Milvus collection 名称，用于检索请求
+        selectionValue:
+          type: string
+          description: 前端选择值，按 collection 去重后与 collection 保持一致
         name:
           type: string
-          description: 前端展示名称
+          description: 前端展示名称；多个知识库复用同一 collection 时用逗号拼接知识库名称，单个空名称显示 --
         repoCode:
           type: string
           description: 知识库目录名

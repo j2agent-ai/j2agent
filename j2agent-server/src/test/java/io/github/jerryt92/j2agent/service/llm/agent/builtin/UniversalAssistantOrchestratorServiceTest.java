@@ -2,6 +2,10 @@ package io.github.jerryt92.j2agent.service.llm.agent.builtin;
 
 import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
 import io.github.jerryt92.j2agent.model.security.UserContextBo;
+import io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent.UniversalAssistantOrchestratorService;
+import io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent.UniversalIntentQueryService;
+import io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent.UniversalOrchestrationDecisionService;
+import io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent.UniversalSubAgentCallService;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;

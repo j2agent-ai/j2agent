@@ -1,4 +1,4 @@
-package io.github.jerryt92.j2agent.service.llm.agent.builtin;
+package io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent;
 
 import io.github.jerryt92.j2agent.service.llm.LlmSyncService;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;

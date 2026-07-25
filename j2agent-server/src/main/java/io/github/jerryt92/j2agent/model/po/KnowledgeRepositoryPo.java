@@ -9,6 +9,7 @@ import lombok.Data;
 public class KnowledgeRepositoryPo {
     private String id;
     private String repoCode;
+    private String type;
     private String protocol;
     private Boolean enabled;
     private Integer updateIntervalMinutes;
@@ -22,6 +23,8 @@ public class KnowledgeRepositoryPo {
     private Long lastSyncTime;
     private String lastError;
     private String protocolConfig;
+    private String displayName;
+    private String metadataConfig;
     private String credentialConfigCipher;
     private Long createdAt;
     private Long updatedAt;

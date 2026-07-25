@@ -1,8 +1,8 @@
-package io.github.jerryt92.j2agent.service.llm.agent.builtin;
+package io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent;
 
+import io.github.jerryt92.j2agent.model.I18nString;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
-import io.github.jerryt92.j2agent.model.I18nString;
 import org.springframework.stereotype.Component;
 
 /**

@@ -10,9 +10,9 @@ public final class KnowledgeRepoDiffHash {
     /**
      * 构造用于增量检测的联合哈希值（含目标 Milvus collection，避免迁库后漏删旧数据）。
      */
-    public static String build(String fileSha256, String infoJsonHash, String collectionName) {
+    public static String build(String fileSha256, String metadataConfigHash, String collectionName) {
         return (fileSha256 == null ? "" : fileSha256)
-                + "|" + (infoJsonHash == null ? "" : infoJsonHash)
+                + "|" + (metadataConfigHash == null ? "" : metadataConfigHash)
                 + "|" + (collectionName == null ? "" : collectionName);
     }
 }

@@ -1,32 +1,48 @@
 package io.github.jerryt92.j2agent.service.rag.knowledge.repo;
 
+import io.github.jerryt92.j2agent.config.rag.KnowledgeRepoProperties;
+import io.github.jerryt92.j2agent.mapper.KnowledgeRepositoryMapper;
+import io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo;
+import io.github.jerryt92.j2agent.service.rag.knowledge.repository.KnowledgeRepositoryAutoRegistrar;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class KnowledgeRepoMetadataServiceCollectionNamesTest {
+    @TempDir
+    Path tempDir;
 
     @Test
-    void listConfiguredCollectionNames_deduplicatesAndTrims() throws Exception {
-        KnowledgeRepoMetadataService service = new KnowledgeRepoMetadataService(
-                new io.github.jerryt92.j2agent.config.rag.KnowledgeRepoProperties());
-        injectCollections(service, " rc_wiki ", "rc_wiki", "other");
+    void listConfiguredCollectionNames_deduplicatesAndTrims() {
+        KnowledgeRepositoryMapper mapper = mock(KnowledgeRepositoryMapper.class);
+        when(mapper.selectEnabledAll()).thenReturn(List.of(
+                repository("repo-a", " rc_wiki "),
+                repository("repo-b", "rc_wiki"),
+                repository("repo-c", "other")));
+        KnowledgeRepoProperties properties = new KnowledgeRepoProperties();
+        properties.setRootPath(tempDir.toString());
+        KnowledgeRepositoryAutoRegistrar autoRegistrar = new KnowledgeRepositoryAutoRegistrar(mapper, properties);
+        KnowledgeRepoMetadataService service = new KnowledgeRepoMetadataService(properties, mapper, autoRegistrar);
+        service.init();
 
         Set<String> names = service.listConfiguredCollectionNames();
 
         assertEquals(Set.of("rc_wiki", "other"), names);
     }
 
-    private static void injectCollections(KnowledgeRepoMetadataService service, String... collections) throws Exception {
-        var field = KnowledgeRepoMetadataService.class.getDeclaredField("collectionByPrefixDir");
-        field.setAccessible(true);
-        var map = new java.util.HashMap<java.nio.file.Path, String>();
-        for (int i = 0; i < collections.length; i++) {
-            map.put(java.nio.file.Path.of("/tmp/prefix-" + i), collections[i]);
-        }
-        field.set(service, java.util.Collections.unmodifiableMap(map));
+    private static KnowledgeRepositoryPo repository(String repoCode, String collection) {
+        KnowledgeRepositoryPo po = new KnowledgeRepositoryPo();
+        po.setRepoCode(repoCode);
+        po.setEnabled(true);
+        po.setMetadataConfig("{\"collectionName\":\"" + collection
+                + "\",\"partitionNames\":[],\"minHeadingLevel\":3,\"filenameAsTitle\":true}");
+        return po;
     }
 }

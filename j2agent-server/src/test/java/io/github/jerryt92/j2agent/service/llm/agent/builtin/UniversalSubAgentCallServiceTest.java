@@ -9,6 +9,7 @@ import io.github.jerryt92.j2agent.service.llm.ThinkingOverrideRegistry;
 import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamOptions;
 import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamSession;
 import io.github.jerryt92.j2agent.service.llm.agent.StreamingTextParts;
+import io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent.UniversalSubAgentCallService;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunContext;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunnableContextKeys;

@@ -1,4 +1,4 @@
-package io.github.jerryt92.j2agent.service.llm.agent.builtin;
+package io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;

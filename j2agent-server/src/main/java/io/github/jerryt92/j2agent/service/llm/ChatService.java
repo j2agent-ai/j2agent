@@ -35,7 +35,7 @@ import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnLifecycle;
 import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
 import io.github.jerryt92.j2agent.service.llm.agent.builtin.SubAgentStreamBridge;
-import io.github.jerryt92.j2agent.service.llm.agent.builtin.UniversalAssistantOrchestratorService;
+import io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent.UniversalAssistantOrchestratorService;
 import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
 import io.github.jerryt92.j2agent.utils.UUIDv7Utils;
 import lombok.extern.slf4j.Slf4j;

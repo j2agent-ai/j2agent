@@ -27,6 +27,9 @@ import java.util.Set;
 @Slf4j
 @Service
 public class KnowledgeService {
+    /** 知识库展示名为空时的占位符 */
+    private static final String EMPTY_REPOSITORY_NAME_PLACEHOLDER = "--";
+
     private final KnowledgeTextChunkService knowledgeTextChunkService;
     private final EmbeddingService embeddingService;
     private final KnowledgeRepoMetadataService metadataService;
@@ -60,30 +63,40 @@ public class KnowledgeService {
     }
 
     /**
-     * 将仓库元数据与已配置/活跃 collection 合并为前端展示 DTO。
+     * 将仓库元数据与已配置/活跃 collection 合并为前端展示 DTO；同一 collection 去重并拼接展示名。
      */
     static List<KnowledgeCollectionDto> buildCollectionDtos(
             List<KnowledgeRepositoryDtos.Item> repositoryItems,
             Set<String> collections) {
-        Map<String, KnowledgeCollectionDto> collectionByName = new LinkedHashMap<>();
+        List<KnowledgeCollectionDto> result = new ArrayList<>();
+        Map<String, CollectionOption> repositoryCollections = new LinkedHashMap<>();
         for (KnowledgeRepositoryDtos.Item repository : repositoryItems) {
-            List<String> repositoryCollections = repository.getCollections() == null ? List.of() : repository.getCollections();
-            for (String collection : repositoryCollections) {
+            List<String> itemCollections = repository.getCollections() == null ? List.of() : repository.getCollections();
+            for (String collection : itemCollections) {
                 if (StringUtils.isBlank(collection)) {
                     continue;
                 }
-                collectionByName.putIfAbsent(collection.trim(), toCollectionDto(repository, collection.trim()));
+                String normalizedCollection = collection.trim();
+                repositoryCollections.computeIfAbsent(normalizedCollection, CollectionOption::new)
+                        .addRepository(repository);
             }
         }
-        for (String collection : collections) {
-            collectionByName.putIfAbsent(collection, new KnowledgeCollectionDto()
-                    .collection(collection)
-                    .name(collection));
+        result.addAll(repositoryCollections.values().stream()
+                .map(CollectionOption::toDto)
+                .toList());
+        List<String> fallbackCollections = collections.stream()
+                .filter(StringUtils::isNotBlank)
+                .map(String::trim)
+                .filter(collection -> !repositoryCollections.containsKey(collection))
+                .sorted()
+                .toList();
+        for (String collection : fallbackCollections) {
+            KnowledgeCollectionDto dto = new KnowledgeCollectionDto();
+            dto.setCollection(collection);
+            dto.setName(EMPTY_REPOSITORY_NAME_PLACEHOLDER);
+            result.add(dto);
         }
-        List<KnowledgeCollectionDto> sorted = new ArrayList<>(collectionByName.values());
-        sorted.sort((left, right) -> StringUtils.defaultString(left.getCollection())
-                .compareTo(StringUtils.defaultString(right.getCollection())));
-        return sorted;
+        return result;
     }
 
     /**
@@ -102,18 +115,31 @@ public class KnowledgeService {
     }
 
     /**
-     * 将仓库条目转为 collection 展示 DTO。
+     * 同一 collection 下多仓库选项的聚合器。
      */
-    private static KnowledgeCollectionDto toCollectionDto(KnowledgeRepositoryDtos.Item repository, String collection) {
-        String alias = repository.getCollectionAliases() == null ? null : repository.getCollectionAliases().get(collection);
-        String repositoryName = StringUtils.trimToNull(repository.getDisplayName());
-        String name = StringUtils.firstNonBlank(alias, repositoryName, collection);
-        return new KnowledgeCollectionDto()
-                .collection(collection)
-                .name(name)
-                .repoCode(repository.getRepoCode())
-                .repositoryName(repositoryName)
-                .type(repository.getType());
+    private static class CollectionOption {
+        private final String collection;
+        private final LinkedHashSet<String> repositoryNames = new LinkedHashSet<>();
+
+        private CollectionOption(String collection) {
+            this.collection = collection;
+        }
+
+        private CollectionOption addRepository(KnowledgeRepositoryDtos.Item repository) {
+            String repositoryName = StringUtils.defaultIfBlank(
+                    StringUtils.trimToNull(repository.getDisplayName()),
+                    StringUtils.defaultIfBlank(repository.getRepoCode(), EMPTY_REPOSITORY_NAME_PLACEHOLDER));
+            repositoryNames.add(repositoryName);
+            return this;
+        }
+
+        private KnowledgeCollectionDto toDto() {
+            String name = String.join(", ", repositoryNames);
+            KnowledgeCollectionDto dto = new KnowledgeCollectionDto();
+            dto.setCollection(collection);
+            dto.setName(name);
+            return dto;
+        }
     }
 
     /**

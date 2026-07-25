@@ -1,12 +1,13 @@
-package io.github.jerryt92.j2agent.service.llm.agent.builtin;
+package io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent;
 
 import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
+import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
+import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.service.llm.AgentTurnStateMachine;
 import io.github.jerryt92.j2agent.service.llm.ThinkingOverrideRegistry;
 import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamOptions;
 import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamSession;
-import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
-import io.github.jerryt92.j2agent.model.security.UserContextBo;
+import io.github.jerryt92.j2agent.service.llm.agent.builtin.SubAgentStreamBridge;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunContext;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;

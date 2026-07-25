@@ -7,6 +7,7 @@ import io.github.jerryt92.j2agent.service.llm.PromptConversationIdExtractor;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunnableContextKeys;
 import io.github.jerryt92.j2agent.service.rag.RagSourcePathUtils;
 import io.github.jerryt92.j2agent.service.rag.RagSourcePublicationService;
+import io.github.jerryt92.j2agent.service.rag.knowledge.KnowledgeCollectionSelection;
 import io.github.jerryt92.j2agent.service.rag.query.QueryTransformContextKeys;
 import io.github.jerryt92.j2agent.service.rag.retrieval.Retriever;
 import lombok.extern.slf4j.Slf4j;
@@ -59,25 +60,27 @@ public class DynamicKnowledgeCollectionsRetriever implements DocumentRetriever {
             logRagSkip(conversationId, "reactToolLoop");
             return List.of();
         }
-        List<String> collections = extractKnowledgeCollections(query);
-        if (collections.isEmpty()) {
+        List<KnowledgeCollectionSelection.Parsed> selections = extractKnowledgeSelections(query);
+        if (selections.isEmpty()) {
             logRagSkip(conversationId, "emptyKnowledgeCollections");
             return List.of();
         }
 
         Map<String, Document> documentsByKey = new LinkedHashMap<>();
         boolean anyFailure = false;
-        for (String collection : collections) {
+        for (KnowledgeCollectionSelection.Parsed selection : selections) {
             Retriever.RagChunksResult result =
-                    retriever.retrieveRagChunksResult(queryText, collection, null, conversationId);
+                    retriever.retrieveRagChunksResult(queryText, selection.collection(), null, conversationId);
             if (result.status() == Retriever.RetrievalStatus.FAILED) {
                 anyFailure = true;
-                logRagRetrieve(conversationId, collection, result.status(), 0, 0, result.failureMessage(), List.of());
+                logRagRetrieve(conversationId, selection.rawValue(), result.status(), 0, 0, result.failureMessage(), List.of());
                 continue;
             }
-            List<EmbeddingModel.EmbeddingsQueryItem> items = result.items();
+            List<EmbeddingModel.EmbeddingsQueryItem> items = result.items().stream()
+                    .filter(item -> KnowledgeCollectionSelection.matchesSourceFile(selection, item.getSourceFile()))
+                    .toList();
             List<Document> documents = buildDocuments(items);
-            logRagRetrieve(conversationId, collection, result.status(), items.size(), documents.size(), null, items);
+            logRagRetrieve(conversationId, selection.rawValue(), result.status(), items.size(), documents.size(), null, items);
             for (Document document : documents) {
                 documentsByKey.putIfAbsent(documentKey(document), document);
             }
@@ -92,8 +95,8 @@ public class DynamicKnowledgeCollectionsRetriever implements DocumentRetriever {
         return documents;
     }
 
-    private List<String> extractKnowledgeCollections(Query query) {
-        List<String> fromContext = normalizeCollectionValue(
+    private List<KnowledgeCollectionSelection.Parsed> extractKnowledgeSelections(Query query) {
+        List<KnowledgeCollectionSelection.Parsed> fromContext = normalizeCollectionValue(
                 query != null && query.context() != null
                         ? query.context().get(AgentRunnableContextKeys.CONTEXT_KEY_KNOWLEDGE_COLLECTIONS)
                         : null);
@@ -106,7 +109,7 @@ public class DynamicKnowledgeCollectionsRetriever implements DocumentRetriever {
         for (int i = query.history().size() - 1; i >= 0; i--) {
             Message message = query.history().get(i);
             if (message instanceof UserMessage userMessage) {
-                List<String> fromMetadata = normalizeCollectionValue(
+                List<KnowledgeCollectionSelection.Parsed> fromMetadata = normalizeCollectionValue(
                         userMessage.getMetadata() == null
                                 ? null
                                 : userMessage.getMetadata().get(
@@ -119,11 +122,11 @@ public class DynamicKnowledgeCollectionsRetriever implements DocumentRetriever {
         return List.of();
     }
 
-    private List<String> normalizeCollectionValue(Object raw) {
+    private List<KnowledgeCollectionSelection.Parsed> normalizeCollectionValue(Object raw) {
         if (raw == null) {
             return List.of();
         }
-        List<String> normalized = new ArrayList<>();
+        List<KnowledgeCollectionSelection.Parsed> normalized = new ArrayList<>();
         if (raw instanceof Collection<?> collection) {
             for (Object item : collection) {
                 addCollectionValue(normalized, item);
@@ -134,13 +137,13 @@ public class DynamicKnowledgeCollectionsRetriever implements DocumentRetriever {
         return normalized;
     }
 
-    private void addCollectionValue(List<String> target, Object raw) {
+    private void addCollectionValue(List<KnowledgeCollectionSelection.Parsed> target, Object raw) {
         if (raw == null) {
             return;
         }
-        String value = StringUtils.trimToNull(raw.toString());
-        if (value != null && !target.contains(value)) {
-            target.add(value);
+        KnowledgeCollectionSelection.Parsed parsed = KnowledgeCollectionSelection.parse(raw.toString());
+        if (parsed != null && target.stream().noneMatch(item -> item.rawValue().equals(parsed.rawValue()))) {
+            target.add(parsed);
         }
     }
 

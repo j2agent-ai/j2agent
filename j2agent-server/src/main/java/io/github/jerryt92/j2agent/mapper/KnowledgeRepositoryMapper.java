@@ -17,13 +17,14 @@ import java.util.List;
 public interface KnowledgeRepositoryMapper {
 
     String BASE_COLUMNS = """
-            id, repo_code AS repoCode, protocol, enabled,
+            id, repo_code AS repoCode, type, protocol, enabled,
             update_interval_minutes AS updateIntervalMinutes, status,
             remote_url AS remoteUrl, default_branch AS defaultBranch,
             last_revision AS lastRevision, last_revision_message AS lastRevisionMessage,
             last_revision_author AS lastRevisionAuthor, last_revision_time AS lastRevisionTime,
             last_sync_time AS lastSyncTime, last_error AS lastError,
             protocol_config::text AS protocolConfig,
+            display_name AS displayName, metadata_config::text AS metadataConfig,
             credential_config_cipher AS credentialConfigCipher,
             created_at AS createdAt, updated_at AS updatedAt
             """;
@@ -40,9 +41,19 @@ public interface KnowledgeRepositoryMapper {
             SELECT
             """ + BASE_COLUMNS + """
             FROM knowledge_repository
+            WHERE type = 'REMOTE'
             ORDER BY created_at DESC
             """)
     List<KnowledgeRepositoryPo> selectRemoteAll();
+
+    @Select("""
+            SELECT
+            """ + BASE_COLUMNS + """
+            FROM knowledge_repository
+            WHERE enabled = true
+            ORDER BY created_at DESC
+            """)
+    List<KnowledgeRepositoryPo> selectEnabledAll();
 
     @Select("""
             SELECT
@@ -67,6 +78,7 @@ public interface KnowledgeRepositoryMapper {
             """ + BASE_COLUMNS + """
             FROM knowledge_repository
             WHERE enabled = true
+              AND type = 'REMOTE'
               AND (last_sync_time IS NULL OR last_sync_time <= #{dueBefore})
             ORDER BY COALESCE(last_sync_time, 0), created_at
             """)
@@ -74,14 +86,16 @@ public interface KnowledgeRepositoryMapper {
 
     @Insert("""
             INSERT INTO knowledge_repository
-            (id, repo_code, protocol, enabled, update_interval_minutes, status,
+            (id, repo_code, type, protocol, enabled, update_interval_minutes, status,
              remote_url, default_branch, last_revision, last_revision_message, last_revision_author,
-             last_revision_time, last_sync_time, last_error, protocol_config, credential_config_cipher,
+             last_revision_time, last_sync_time, last_error, protocol_config,
+             display_name, metadata_config, credential_config_cipher,
              created_at, updated_at)
             VALUES
-            (#{id}, #{repoCode}, #{protocol}, #{enabled}, #{updateIntervalMinutes}, #{status},
+            (#{id}, #{repoCode}, #{type}, #{protocol}, #{enabled}, #{updateIntervalMinutes}, #{status},
              #{remoteUrl}, #{defaultBranch}, #{lastRevision}, #{lastRevisionMessage}, #{lastRevisionAuthor},
-             #{lastRevisionTime}, #{lastSyncTime}, #{lastError}, CAST(#{protocolConfig} AS jsonb), #{credentialConfigCipher},
+             #{lastRevisionTime}, #{lastSyncTime}, #{lastError}, CAST(#{protocolConfig} AS jsonb),
+             #{displayName}, CAST(#{metadataConfig} AS jsonb), #{credentialConfigCipher},
              #{createdAt}, #{updatedAt})
             """)
     int insert(KnowledgeRepositoryPo po);
@@ -89,12 +103,15 @@ public interface KnowledgeRepositoryMapper {
     @Update("""
             UPDATE knowledge_repository
             SET repo_code = #{repoCode},
+                type = #{type},
                 protocol = #{protocol},
                 enabled = #{enabled},
                 update_interval_minutes = #{updateIntervalMinutes},
                 remote_url = #{remoteUrl},
                 default_branch = #{defaultBranch},
                 protocol_config = CAST(#{protocolConfig} AS jsonb),
+                display_name = #{displayName},
+                metadata_config = CAST(#{metadataConfig} AS jsonb),
                 credential_config_cipher = #{credentialConfigCipher},
                 updated_at = #{updatedAt}
             WHERE id = #{id}

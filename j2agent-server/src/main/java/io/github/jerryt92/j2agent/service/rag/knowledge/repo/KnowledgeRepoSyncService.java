@@ -51,7 +51,7 @@ public class KnowledgeRepoSyncService {
     /**
      * 文件最新状态：含 collection 与可选 Milvus 分区列表。
      */
-    private record FileState(String fileSha256, String infoJsonHash, String collectionName, List<String> partitionNames,
+    private record FileState(String fileSha256, String metadataConfigHash, String collectionName, List<String> partitionNames,
                              String diffHash) {
     }
 
@@ -383,7 +383,7 @@ public class KnowledgeRepoSyncService {
             hashTreeService.upsertActive(
                     Path.of(relativePath),
                     fileState.fileSha256(),
-                    fileState.infoJsonHash(),
+                    fileState.metadataConfigHash(),
                     fileState.collectionName(),
                     fileState.partitionNames(),
                     upsertedCount,
@@ -547,24 +547,29 @@ public class KnowledgeRepoSyncService {
     private Map<String, FileState> buildLatestFileState(Path rootPath) {
         Map<String, FileState> snapshot = new HashMap<>();
         if (!metadataService.hasMetadata()) {
-            log.info("知识库目录未找到 info.json，本轮按空知识库处理: {}", rootPath.toAbsolutePath().normalize());
+            log.info("知识库目录未找到已启用仓库配置，本轮按空知识库处理: {}", rootPath.toAbsolutePath().normalize());
             return snapshot;
         }
-        // 与 KnowledgeRepoMetadataService 扫描一致，跟随符号链接以识别外链的知识库目录
-        try (Stream<Path> pathStream = Files.walk(rootPath, Integer.MAX_VALUE, FileVisitOption.FOLLOW_LINKS)) {
-            pathStream.filter(Files::isRegularFile)
-                    .filter(this::isSupportedKnowledgeDocument)
-                    .forEach(path -> {
-                        String relativePath = toRepoRelativePath(rootPath, path);
-                        String fileSha256 = calculateSha256(path);
-                        String infoJsonHash = metadataService.resolveInfoJsonHash(path);
-                        String collectionName = metadataService.resolveCollection(path);
-                        List<String> partitionNames = metadataService.resolvePartitionNames(path);
-                        String diffHash = KnowledgeRepoDiffHash.build(fileSha256, infoJsonHash, collectionName);
-                        snapshot.put(relativePath, new FileState(fileSha256, infoJsonHash, collectionName, partitionNames, diffHash));
-                    });
-        } catch (IOException e) {
-            throw new IllegalStateException("扫描知识库目录失败", e);
+        for (Path repositoryPath : metadataService.listConfiguredRepositoryPaths()) {
+            if (!Files.isDirectory(repositoryPath)) {
+                continue;
+            }
+            // 跟随符号链接以识别外链的知识库目录。
+            try (Stream<Path> pathStream = Files.walk(repositoryPath, Integer.MAX_VALUE, FileVisitOption.FOLLOW_LINKS)) {
+                pathStream.filter(Files::isRegularFile)
+                        .filter(this::isSupportedKnowledgeDocument)
+                        .forEach(path -> {
+                            String relativePath = toRepoRelativePath(rootPath, path);
+                            String fileSha256 = calculateSha256(path);
+                            String metadataConfigHash = metadataService.resolveMetadataConfigHash(path);
+                            String collectionName = metadataService.resolveCollection(path);
+                            List<String> partitionNames = metadataService.resolvePartitionNames(path);
+                            String diffHash = KnowledgeRepoDiffHash.build(fileSha256, metadataConfigHash, collectionName);
+                            snapshot.put(relativePath, new FileState(fileSha256, metadataConfigHash, collectionName, partitionNames, diffHash));
+                        });
+            } catch (IOException e) {
+                throw new IllegalStateException("扫描知识库仓库目录失败: " + repositoryPath, e);
+            }
         }
         return snapshot;
     }
@@ -697,7 +702,7 @@ public class KnowledgeRepoSyncService {
     }
 
     /**
-     * 递归注册知识库目录监听；info.json 可位于子目录，必须监听整棵目录树。
+     * 递归注册知识库目录监听。
      */
     private void registerAllDirectories(Path rootPath) throws IOException {
         try (Stream<Path> stream = Files.walk(rootPath, Integer.MAX_VALUE, FileVisitOption.FOLLOW_LINKS)) {

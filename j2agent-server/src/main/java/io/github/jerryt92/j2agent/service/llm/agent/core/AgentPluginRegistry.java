@@ -16,6 +16,9 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.ApplicationListener;
+import org.springframework.context.event.ApplicationEventMulticaster;
+import org.springframework.context.event.ApplicationListenerMethodAdapter;
+import org.springframework.context.support.AbstractApplicationContext;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Repository;
 import org.springframework.stereotype.Service;
@@ -25,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.MalformedURLException;
 import java.net.URLClassLoader;
@@ -490,7 +494,8 @@ public class AgentPluginRegistry implements BeanDefinitionRegistryPostProcessor,
                     beanDefinition.setLazyInit(true);
                     registry.registerBeanDefinition(beanName, beanDefinition);
                     boolean aiAgent = isConcreteAiAgent(clazz);
-                    DynamicRegistration registration = new DynamicRegistration(beanName, classLoader, bundle.label(), aiAgent);
+                    DynamicRegistration registration =
+                            new DynamicRegistration(beanName, clazz.getName(), classLoader, bundle.label(), aiAgent);
                     dynamicRegistrations.add(registration);
                     added.add(registration);
                     log.info("Registered dynamic plugin bean definition: {} from {} (aiAgent={})",
@@ -524,7 +529,11 @@ public class AgentPluginRegistry implements BeanDefinitionRegistryPostProcessor,
         return true;
     }
 
-    private static void removeBeanDefinition(BeanDefinitionRegistry registry, String beanName) {
+    private void removeBeanDefinition(BeanDefinitionRegistry registry, String beanName) {
+        dynamicRegistrations.stream()
+                .filter(registration -> registration.beanName().equals(beanName))
+                .findFirst()
+                .ifPresent(this::removeDynamicEventListeners);
         if (registry instanceof DefaultListableBeanFactory beanFactory) {
             if (beanFactory.containsSingleton(beanName)) {
                 beanFactory.destroySingleton(beanName);
@@ -578,6 +587,7 @@ public class AgentPluginRegistry implements BeanDefinitionRegistryPostProcessor,
         for (DynamicRegistration registration : snapshot) {
             String beanName = registration.beanName();
             try {
+                removeDynamicEventListeners(registration);
                 if (beanFactory.containsSingleton(beanName)) {
                     beanFactory.destroySingleton(beanName);
                 }
@@ -592,6 +602,53 @@ public class AgentPluginRegistry implements BeanDefinitionRegistryPostProcessor,
             }
         }
         classLoaders.forEach(AgentPluginRegistry::closeQuietly);
+    }
+
+    /**
+     * {@code @EventListener} 方法会以 {@link ApplicationListenerMethodAdapter} 常驻事件广播器。
+     * 动态插件热卸载只移除 BeanDefinition 不会自动摘除这些适配器，旧 ClassLoader 中的 Method
+     * 会在下一次事件发布时尝试调用同名新 Bean，触发 Spring 的目标类型断言异常。
+     */
+    private void removeDynamicEventListeners(DynamicRegistration registration) {
+        if (applicationContext == null) {
+            return;
+        }
+        try {
+            ApplicationEventMulticaster multicaster = applicationContext.getBean(
+                    AbstractApplicationContext.APPLICATION_EVENT_MULTICASTER_BEAN_NAME,
+                    ApplicationEventMulticaster.class);
+            multicaster.removeApplicationListenerBean(registration.beanName());
+            multicaster.removeApplicationListeners(listener -> isListenerForDynamicRegistration(listener, registration));
+        } catch (Exception ex) {
+            log.debug("Failed to remove dynamic event listeners for bean {}: {}",
+                    registration.beanName(), ex.getMessage());
+        }
+    }
+
+    private static boolean isListenerForDynamicRegistration(ApplicationListener<?> listener,
+                                                           DynamicRegistration registration) {
+        if (!(listener instanceof ApplicationListenerMethodAdapter adapter)) {
+            return false;
+        }
+        Method targetMethod = resolveListenerTargetMethod(adapter);
+        if (targetMethod != null) {
+            Class<?> declaringClass = targetMethod.getDeclaringClass();
+            return declaringClass.getClassLoader() == registration.classLoader()
+                    || declaringClass.getName().equals(registration.className());
+        }
+        String listenerId = adapter.getListenerId();
+        return listenerId != null && listenerId.startsWith(registration.className() + ".");
+    }
+
+    private static Method resolveListenerTargetMethod(ApplicationListenerMethodAdapter adapter) {
+        try {
+            Method accessor = ApplicationListenerMethodAdapter.class.getDeclaredMethod("getTargetMethod");
+            accessor.setAccessible(true);
+            Object targetMethod = accessor.invoke(adapter);
+            return targetMethod instanceof Method method ? method : null;
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     /**
@@ -879,13 +936,19 @@ public class AgentPluginRegistry implements BeanDefinitionRegistryPostProcessor,
      */
     static final class DynamicRegistration {
         private final String beanName;
+        private final String className;
         private final PluginAgentClassLoader classLoader;
         private final String jarFileName;
         private final boolean aiAgent;
         private volatile String agentId;
 
-        DynamicRegistration(String beanName, PluginAgentClassLoader classLoader, String jarFileName, boolean aiAgent) {
+        DynamicRegistration(String beanName,
+                            String className,
+                            PluginAgentClassLoader classLoader,
+                            String jarFileName,
+                            boolean aiAgent) {
             this.beanName = beanName;
+            this.className = className;
             this.classLoader = classLoader;
             this.jarFileName = jarFileName;
             this.aiAgent = aiAgent;
@@ -897,6 +960,10 @@ public class AgentPluginRegistry implements BeanDefinitionRegistryPostProcessor,
 
         String beanName() {
             return beanName;
+        }
+
+        String className() {
+            return className;
         }
 
         PluginAgentClassLoader classLoader() {
