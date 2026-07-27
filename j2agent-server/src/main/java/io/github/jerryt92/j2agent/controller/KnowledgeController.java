@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.controller;
 
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.model.KnowledgeAddDto;
 import io.github.jerryt92.j2agent.model.KnowledgeCollectionListDto;
 import io.github.jerryt92.j2agent.model.KnowledgeGetListDto;
@@ -35,7 +36,7 @@ import java.util.List;
 
 @Slf4j
 @RestController
-@RequiredRole(RequiredRole.ADMIN)
+@RequiredRole(UserRoleEnum.KB_ADMIN)
 public class KnowledgeController implements KnowledgeApi {
 
     private final KnowledgeService knowledgeService;
@@ -59,7 +60,7 @@ public class KnowledgeController implements KnowledgeApi {
     }
 
     @Override
-    @RequiredRole(RequiredRole.USER)
+    @RequiredRole(UserRoleEnum.USER)
     public ResponseEntity<KnowledgeCollectionListDto> getKnowledgeCollections() {
         return ResponseEntity.ok(knowledgeService.getKnowledgeCollections());
     }

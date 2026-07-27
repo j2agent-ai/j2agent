@@ -2,6 +2,7 @@ package io.github.jerryt92.j2agent.controller;
 
 import com.alibaba.fastjson2.JSONObject;
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.server.api.AgentGlobalConfigApi;
 import io.github.jerryt92.j2agent.service.AgentGlobalConfigService;
 import org.springframework.http.ResponseEntity;
@@ -10,7 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 @RestController
-@RequiredRole(RequiredRole.ADMIN)
+@RequiredRole(UserRoleEnum.ADMIN)
 public class AgentGlobalConfigController implements AgentGlobalConfigApi {
 
     private final AgentGlobalConfigService agentGlobalConfigService;

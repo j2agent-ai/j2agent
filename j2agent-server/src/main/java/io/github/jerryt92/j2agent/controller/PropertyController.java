@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.controller;
 
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.model.PropertyDto;
 import io.github.jerryt92.j2agent.server.api.PropertyApi;
 import io.github.jerryt92.j2agent.service.PropertiesService;
@@ -12,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequiredRole(RequiredRole.ADMIN)
+@RequiredRole(UserRoleEnum.ADMIN)
 public class PropertyController implements PropertyApi {
     private final PropertiesService propertiesService;
 

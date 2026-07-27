@@ -12,6 +12,7 @@ import io.github.jerryt92.j2agent.model.UserRoleUpdateRequestDto;
 import io.github.jerryt92.j2agent.model.po.mgb.UserPo;
 import io.github.jerryt92.j2agent.model.po.mgb.UserPoExample;
 import io.github.jerryt92.j2agent.model.security.UserContextBo;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.utils.UUIDv7Utils;
 import io.github.jerryt92.j2agent.utils.UserUtil;
 import org.springframework.dao.DuplicateKeyException;
@@ -160,7 +161,7 @@ public class UserService {
         UserPo user = new UserPo();
         user.setId(userId);
         user.setUsername(username);
-        user.setRole(UserContextBo.RoleEnum.USER.getValue());
+        user.setRole(UserRoleEnum.USER.getValue());
         user.setCreateTime(System.currentTimeMillis());
         user.setPasswordHash(UserUtil.getPasswordHash(userId, UUID.randomUUID().toString()));
         try {
@@ -195,7 +196,7 @@ public class UserService {
         user.setUsername(username);
         user.setEmail(email);
         user.setCreateTime(System.currentTimeMillis());
-        user.setRole(UserContextBo.RoleEnum.USER.getValue());
+        user.setRole(UserRoleEnum.USER.getValue());
         user.setPasswordHash(UserUtil.getPasswordHash(user.getId(), request.getPassword()));
         userPoMapper.insertSelective(user);
     }
@@ -313,8 +314,10 @@ public class UserService {
     }
 
     private int normalizeRole(Integer role) {
-        int value = role == null ? UserContextBo.RoleEnum.USER.getValue() : role;
-        if (value != UserContextBo.RoleEnum.ADMIN.getValue() && value != UserContextBo.RoleEnum.USER.getValue()) {
+        int value = role == null ? UserRoleEnum.USER.getValue() : role;
+        try {
+            UserRoleEnum.fromValue(value);
+        } catch (IllegalArgumentException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unsupported role");
         }
         return value;

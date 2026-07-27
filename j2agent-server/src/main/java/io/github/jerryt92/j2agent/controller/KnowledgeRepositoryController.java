@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.controller;
 
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.model.repository.KnowledgeRepositoryDtos;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repository.KnowledgeRepositoryService;
 import org.springframework.http.HttpStatus;
@@ -18,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 知识库仓库管理接口。
  */
 @RestController
-@RequiredRole(RequiredRole.ADMIN)
+@RequiredRole(UserRoleEnum.KB_ADMIN)
 @RequestMapping("/v1/rest/j2agent/knowledge/repositories")
 public class KnowledgeRepositoryController {
     private final KnowledgeRepositoryService service;

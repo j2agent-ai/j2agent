@@ -10,6 +10,7 @@ import io.github.jerryt92.j2agent.service.file.oss.model.ObjectFileView;
 import io.github.jerryt92.j2agent.service.file.oss.model.PresignedUploadCredential;
 
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.model.ObjectBatchResultDto;
 import io.github.jerryt92.j2agent.model.ObjectFileBatchDeleteRequest;
 import io.github.jerryt92.j2agent.model.ObjectFileItemDto;
@@ -51,7 +52,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @RestController
-@RequiredRole(RequiredRole.ADMIN)
+@RequiredRole(UserRoleEnum.ADMIN)
 @ConditionalOnBean(ObjectStorageService.class)
 public class FileManagementController implements FileManagementApi {
     private final ObjectFileManagementService fileService;

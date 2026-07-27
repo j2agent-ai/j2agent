@@ -10,6 +10,7 @@ import io.github.jerryt92.j2agent.model.AuthResultDto;
 import io.github.jerryt92.j2agent.model.po.mgb.UserPo;
 import io.github.jerryt92.j2agent.model.po.mgb.UserPoExample;
 import io.github.jerryt92.j2agent.model.security.UserContextBo;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.utils.I18nLocaleUtils;
 import io.github.jerryt92.j2agent.utils.UserUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -140,7 +141,7 @@ public class LoginService {
         Instant now = Instant.now();
         long expiresIn = jwtService.expiresTime(TerminalType.BROWSER, false);
         Instant expiresAt = now.plus(expiresIn, ChronoUnit.SECONDS);
-        UserContextBo.RoleEnum role = UserContextBo.RoleEnum.fromValue(userPo.getRole());
+        UserRoleEnum role = UserRoleEnum.fromValue(userPo.getRole());
         String sid = UUID.randomUUID().toString();
 
         String token = jwtService.signToken(JWT.create()
@@ -215,7 +216,7 @@ public class LoginService {
         userContextBo.setSessionId(sid);
         userContextBo.setUserId(userPo.getId());
         userContextBo.setUsername(userPo.getUsername());
-        userContextBo.setRole(UserContextBo.RoleEnum.fromValue(userPo.getRole()));
+        userContextBo.setRole(UserRoleEnum.fromValue(userPo.getRole()));
         userContextBo.setPermissions(List.of());
         userContextBo.setExpireTime(expireTime);
         userLoginContextCache.save(sid, userPo.getId(), userContextBo, ttlSeconds);

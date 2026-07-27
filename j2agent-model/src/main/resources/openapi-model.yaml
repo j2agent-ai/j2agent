@@ -220,7 +220,7 @@ components:
           description: 用户名
         role:
           type: integer
-          description: 用户角色，1-管理员，2-普通用户
+          description: 用户角色，1-管理员，2-知识库管理员，3-普通用户
         createTime:
           type: integer
           format: int64
@@ -247,7 +247,7 @@ components:
           description: 密码
         role:
           type: integer
-          description: 用户角色，1-管理员，2-普通用户
+          description: 用户角色，1-管理员，2-知识库管理员，3-普通用户
     UserRoleUpdateRequestDto:
       type: object
       properties:
@@ -256,7 +256,7 @@ components:
           description: 用户ID
         role:
           type: integer
-          description: 用户角色，1-管理员，2-普通用户
+          description: 用户角色，1-管理员，2-知识库管理员，3-普通用户
     UserPasswordUpdateRequestDto:
       type: object
       properties:

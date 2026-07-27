@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.controller;
 
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.model.AgentInstallResult;
 import io.github.jerryt92.j2agent.model.AgentPluginPackageDto;
 import io.github.jerryt92.j2agent.model.AgentPluginStatusDto;
@@ -20,7 +21,7 @@ import java.util.List;
  * 外部 Agent 插件 JAR 管理接口。
  */
 @RestController
-@RequiredRole(RequiredRole.ADMIN)
+@RequiredRole(UserRoleEnum.ADMIN)
 public class AgentPluginController implements AgentPluginApi {
 
     private final AgentPluginReloadService agentPluginReloadService;
