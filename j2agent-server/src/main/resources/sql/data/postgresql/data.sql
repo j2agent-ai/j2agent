@@ -13,7 +13,7 @@ INSERT INTO ai_properties (property_name, property_value, description)
 VALUES ('RETRIEVE_METRIC_TYPE', 'COSINE', '检索度量指标（COSINE余弦相似度、IP积内积、L2欧式距离等）');
 
 INSERT INTO ai_properties (property_name, property_value, description)
-VALUES ('RETRIEVE_METRIC_SCORE_COMPARE_EXPR', '> 0.8',
+VALUES ('RETRIEVE_METRIC_SCORE_COMPARE_EXPR', '> 50',
         '检索度量结果评分过滤条件，不同度量指标的取值范围不同，请根据实际情况修改');
 
 -- MCP

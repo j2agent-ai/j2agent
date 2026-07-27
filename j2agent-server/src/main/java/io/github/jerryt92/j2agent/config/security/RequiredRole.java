@@ -1,5 +1,7 @@
 package io.github.jerryt92.j2agent.config.security;
 
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
+
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -11,16 +13,9 @@ import java.lang.annotation.Target;
 @Target({ElementType.TYPE, ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface RequiredRole {
-    int value() default 2;
-
     /**
-     * 管理员角色要求。
+     * 角色值越小权限越高。
      */
-    int ADMIN = 1;
-
-    /**
-     * 普通用户角色要求。
-     */
-    int USER = 2;
+    UserRoleEnum value() default UserRoleEnum.USER;
 
 }

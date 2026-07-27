@@ -2,6 +2,7 @@ package io.github.jerryt92.j2agent.controller;
 
 import com.alibaba.fastjson2.JSONObject;
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.model.McpStatusItem;
 import io.github.jerryt92.j2agent.server.api.McpApi;
 import io.github.jerryt92.j2agent.service.llm.mcp.McpService;
@@ -14,7 +15,7 @@ import java.util.Map;
 
 @RestController
 @Slf4j
-@RequiredRole(RequiredRole.ADMIN)
+@RequiredRole(UserRoleEnum.ADMIN)
 public class McpController implements McpApi {
     private final McpService mcpService;
 

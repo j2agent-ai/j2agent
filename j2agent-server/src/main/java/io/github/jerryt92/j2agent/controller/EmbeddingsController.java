@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.controller;
 
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.model.EmbeddingsRequestDto;
 import io.github.jerryt92.j2agent.model.EmbeddingsResponseDto;
 import io.github.jerryt92.j2agent.model.Translator;
@@ -11,7 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequiredRole(RequiredRole.ADMIN)
+@RequiredRole(UserRoleEnum.ADMIN)
 public class EmbeddingsController implements EmbeddingApi {
     @Autowired
     private EmbeddingService embeddingService;

@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.controller;
 
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.model.EmbeddingRuntimeStatusDto;
 import io.github.jerryt92.j2agent.model.ProviderConfigDto;
 import io.github.jerryt92.j2agent.model.ProviderConfigUpsertDto;
@@ -20,7 +21,7 @@ import java.util.List;
  * 模型提供商配置（LLM/Embedding）REST 端点。
  */
 @RestController
-@RequiredRole(RequiredRole.ADMIN)
+@RequiredRole(UserRoleEnum.ADMIN)
 public class ProviderConfigController implements ProviderConfigApi {
 
     private final ApiProviderConfigService service;
