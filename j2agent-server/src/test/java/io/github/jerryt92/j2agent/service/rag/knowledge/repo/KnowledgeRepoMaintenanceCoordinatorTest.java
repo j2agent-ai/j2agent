@@ -5,6 +5,7 @@ import io.github.jerryt92.j2agent.config.rag.VectorDatabaseInit;
 import io.github.jerryt92.j2agent.service.embedding.EmbeddingService;
 import io.github.jerryt92.j2agent.config.provider.ActiveProviderHolder;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
@@ -25,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -53,6 +55,11 @@ class KnowledgeRepoMaintenanceCoordinatorTest {
     Path tempRepo;
 
     private KnowledgeRepoMaintenanceCoordinator coordinator;
+
+    @BeforeEach
+    void setUp() {
+        lenient().when(properties.isStartupSyncEnabled()).thenReturn(true);
+    }
 
     @AfterEach
     void tearDown() {
@@ -134,6 +141,21 @@ class KnowledgeRepoMaintenanceCoordinatorTest {
 
         assertEquals(KnowledgeRepoMaintenanceTaskType.FAILED, coordinator.getCurrentTaskType());
         verify(syncService, never()).startWatch(any());
+    }
+
+    @Test
+    void requestStartupInit_whenStartupSyncDisabled_skipsSync() throws Exception {
+        when(properties.isStartupSyncEnabled()).thenReturn(false);
+
+        coordinator = newCoordinator();
+        coordinator.requestStartupInit();
+        Thread.sleep(200);
+
+        verify(metadataService, never()).getRepoRootPath();
+        verify(lockService, never()).tryWithLock(any(), any(), any());
+        verify(syncService, never()).initializeHashCache();
+        verify(syncService, never()).executeIncrementalSync(any());
+        verify(syncService, never()).executeFullRebuild(any());
     }
 
     @Test

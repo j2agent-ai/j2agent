@@ -3,12 +3,12 @@ package io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
-import io.github.jerryt92.j2agent.constants.CommonConstants;
 import io.github.jerryt92.j2agent.logging.llm.AgentRunEventType;
 import io.github.jerryt92.j2agent.logging.llm.AgentRunLogger;
 import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
 import io.github.jerryt92.j2agent.service.llm.LlmSyncService;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
+import io.github.jerryt92.j2agent.service.llm.chat.TurnCancellationGuard;
 import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
@@ -22,6 +22,7 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -66,10 +67,19 @@ public class UniversalIntentQueryService {
 
     private final AgentRouter agentRouter;
     private final LlmSyncService llmSyncService;
+    private final TurnCancellationGuard turnCancellationGuard;
 
     public UniversalIntentQueryService(AgentRouter agentRouter, LlmSyncService llmSyncService) {
+        this(agentRouter, llmSyncService, null);
+    }
+
+    @Autowired
+    public UniversalIntentQueryService(AgentRouter agentRouter,
+                                       LlmSyncService llmSyncService,
+                                       TurnCancellationGuard turnCancellationGuard) {
         this.agentRouter = agentRouter;
         this.llmSyncService = llmSyncService;
+        this.turnCancellationGuard = turnCancellationGuard;
     }
 
     /**
@@ -274,9 +284,7 @@ public class UniversalIntentQueryService {
      * @param turnId         回合 ID，用于中断检查；可为 null
      */
     public String queryIntentAgents(String conversationId, String routingQuery, String turnId) {
-        if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
-            throw new TurnCancelledException(turnId);
-        }
+        throwIfCancelled(turnId);
         if (StringUtils.isBlank(routingQuery)) {
             return "[]";
         }
@@ -300,9 +308,7 @@ public class UniversalIntentQueryService {
                     new SystemMessage(INTENT_QUERY_SYSTEM_PROMPT),
                     new UserMessage(userBlock)));
             String raw = llmSyncService.callAssistantText(prompt, conversationId);
-            if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
-                throw new TurnCancelledException(turnId);
-            }
+            throwIfCancelled(turnId);
             String sanitized = sanitizeCandidateJson(raw, candidates, conversationId);
             logIntentRecall(conversationId, "raw", truncateForLog(raw));
             logIntentRecall(conversationId, "sanitized", truncateForLog(sanitized));
@@ -316,6 +322,16 @@ public class UniversalIntentQueryService {
                     AgentRunLogger.kv("phase", "llmError", "errorType", ex.getClass().getSimpleName()),
                     "intent recall LLM failed: " + ex);
             return "[]";
+        }
+    }
+
+    private void throwIfCancelled(String turnId) {
+        if (turnCancellationGuard != null) {
+            turnCancellationGuard.throwIfCancelled(turnId);
+            return;
+        }
+        if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
+            throw new TurnCancelledException(turnId);
         }
     }
 
@@ -378,7 +394,7 @@ public class UniversalIntentQueryService {
                 sb.append('\n');
             }
             sb.append("【").append(agent.getAgentId()).append("】\n");
-            sb.append("name: ").append(agent.resolveAgentName(CommonConstants.ZH_CN)).append('\n');
+            sb.append("name: ").append(agent.resolveAgentName(io.github.jerryt92.j2agent.constants.CommonConstants.ZH_CN)).append('\n');
             sb.append("orchestrationPrompt: ").append(normalizeOrchestrationPromptText(agent.resolveOrchestrationPrompt()));
         }
         return sb.toString();

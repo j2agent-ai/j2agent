@@ -9,6 +9,7 @@ import io.github.jerryt92.j2agent.logging.llm.AgentRunLogger;
 import io.github.jerryt92.j2agent.service.llm.LlmProviderErrorFormatter;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
 import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
+import io.github.jerryt92.j2agent.service.llm.chat.TurnCancellationGuard;
 import io.github.jerryt92.j2agent.service.llm.reasoning.AssistantMessageReasoningExtractor;
 import io.github.jerryt92.j2agent.service.llm.reasoning.ReasoningSnapshotTracker;
 import io.github.jerryt92.j2agent.service.llm.reasoning.ThinkingStreamSplitter;
@@ -25,13 +26,18 @@ import java.time.Duration;
  */
 @Service
 public class AgentStreamSession {
+    private final TurnCancellationGuard turnCancellationGuard;
+
+    public AgentStreamSession(TurnCancellationGuard turnCancellationGuard) {
+        this.turnCancellationGuard = turnCancellationGuard;
+    }
 
     public Flux<StreamingTextParts> stream(AgentStreamOptions options) {
         ReasoningSnapshotTracker reasoningTracker = new ReasoningSnapshotTracker();
         ThinkingStreamSplitter thinkingStreamSplitter = new ThinkingStreamSplitter();
         String turnId = options.agentRunContext().turnId();
         return Flux.defer(() -> {
-                    if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
+                    if (isCancelled(options)) {
                         return Flux.error(new TurnCancelledException(turnId));
                     }
                     options.streamStartedAtMs().set(System.currentTimeMillis());
@@ -41,10 +47,10 @@ public class AgentStreamSession {
                         throw new RuntimeException(e);
                     }
                 })
-                .takeWhile(nodeOutput -> !ChatTurnCancellationRegistry.isCancelled(turnId))
+                .takeWhile(nodeOutput -> !isCancelled(options))
                 .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
                         .maxBackoff(Duration.ofSeconds(3))
-                        .filter(t -> !ChatTurnCancellationRegistry.isCancelled(turnId)
+                        .filter(t -> !isCancelled(options)
                                 && !isTurnCancellationFailure(t)
                                 && (AgentStreamRetrySupport.isConnectionResetByPeer(t)
                                 || LlmProviderErrorFormatter.isEmptyStreamFailure(t))
@@ -84,6 +90,15 @@ public class AgentStreamSession {
                         options.onStreamFinally().run();
                     }
                 });
+    }
+
+    private boolean isCancelled(AgentStreamOptions options) {
+        String turnId = options.agentRunContext().turnId();
+        if (turnCancellationGuard.isCancelled(turnId)) {
+            ChatTurnCancellationRegistry.cancel(turnId);
+            return true;
+        }
+        return false;
     }
 
     static StreamingTextParts extractStreamingParts(NodeOutput nodeOutput,

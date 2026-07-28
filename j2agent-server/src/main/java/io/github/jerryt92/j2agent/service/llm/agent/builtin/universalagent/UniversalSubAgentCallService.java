@@ -13,15 +13,18 @@ import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunContext;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.constant.AgentThinkingOverride;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
+import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnControlService;
+import io.github.jerryt92.j2agent.service.llm.chat.TurnCancellationGuard;
 import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
+import io.github.jerryt92.j2agent.service.llm.memory.ConversationIdCodec;
 import io.github.jerryt92.j2agent.logging.llm.AgentRunEventType;
 import io.github.jerryt92.j2agent.logging.llm.AgentRunLogger;
-import io.github.jerryt92.j2agent.service.llm.memory.ConversationIdCodec;
 import io.github.jerryt92.j2agent.service.llm.rag.TurnRagSourceRegistry;
-import io.github.jerryt92.j2agent.service.question.TurnAskQuestionRegistry;
 import io.github.jerryt92.j2agent.service.llm.tool.ToolEventEmitter;
+import io.github.jerryt92.j2agent.service.question.TurnAskQuestionRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
 
@@ -32,7 +35,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 通用助手子智能体调用（无 {@code @Tool}），由编排服务直接调用。
+ * 通用助手子智能体调用（无 {@code @Tool}），由编排 Hook 直接调用。
  * 委派调用使用 {@code subAgentCallRun=true}，不读写子智能体会话记忆，避免聊天记录落入专业 Agent 键。
  */
 @Slf4j
@@ -43,10 +46,22 @@ public class UniversalSubAgentCallService {
 
     private final AgentRouter agentRouter;
     private final AgentStreamSession agentStreamSession;
+    private final ChatTurnControlService chatTurnControlService;
+    private final TurnCancellationGuard turnCancellationGuard;
 
     public UniversalSubAgentCallService(AgentRouter agentRouter, AgentStreamSession agentStreamSession) {
+        this(agentRouter, agentStreamSession, null, null);
+    }
+
+    @Autowired
+    public UniversalSubAgentCallService(AgentRouter agentRouter,
+                                        AgentStreamSession agentStreamSession,
+                                        ChatTurnControlService chatTurnControlService,
+                                        TurnCancellationGuard turnCancellationGuard) {
         this.agentRouter = agentRouter;
         this.agentStreamSession = agentStreamSession;
+        this.chatTurnControlService = chatTurnControlService;
+        this.turnCancellationGuard = turnCancellationGuard;
     }
 
     public String call(String agentId, String query, SubAgentCallRequest request) {
@@ -60,9 +75,7 @@ public class UniversalSubAgentCallService {
             return "Error: missing turn context for sub-agent call";
         }
         String turnId = request.turnId();
-        if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
-            throw new TurnCancelledException(turnId);
-        }
+        throwIfCancelled(turnId);
         String trimmedAgentId = agentId.trim();
         String trimmedQuery = query.trim();
         boolean callable = agentRouter.listCallableSubAgents().stream()
@@ -117,9 +130,7 @@ public class UniversalSubAgentCallService {
             streamSubAgentToCompletion(targetAgent, subContext, turnId, bridge, content, reasoning, textLock,
                     subAgentTurnLock, subAgentStateMachine);
 
-            if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
-                throw new TurnCancelledException(turnId);
-            }
+            throwIfCancelled(turnId);
 
             String text = content.toString().trim();
             if (StringUtils.isBlank(text)) {
@@ -170,7 +181,7 @@ public class UniversalSubAgentCallService {
                         new AtomicLong(0),
                         new AtomicInteger(0),
                         null))
-                .takeWhile(parts -> !ChatTurnCancellationRegistry.isCancelled(turnId))
+                .takeWhile(parts -> !isCancelled(turnId))
                 .doOnNext(parts -> {
                     if (bridge != null) {
                         bridge.emitDelta(parts.answerDelta(), parts.reasoningDelta());
@@ -190,7 +201,11 @@ public class UniversalSubAgentCallService {
                 .doOnError(errorRef::set)
                 .doFinally(signal -> latch.countDown())
                 .subscribe();
-        ChatTurnCancellationRegistry.registerDisposable(turnId, disposable);
+        if (chatTurnControlService != null) {
+            chatTurnControlService.registerDisposable(turnId, disposable);
+        } else {
+            ChatTurnCancellationRegistry.registerDisposable(turnId, disposable);
+        }
         try {
             latch.await();
         } catch (InterruptedException ex) {
@@ -215,5 +230,17 @@ public class UniversalSubAgentCallService {
             ToolEventEmitter toolEventEmitter,
             List<ChatAttachmentDto> attachments,
             UserContextBo userContext) {
+    }
+
+    private boolean isCancelled(String turnId) {
+        return turnCancellationGuard == null
+                ? ChatTurnCancellationRegistry.isCancelled(turnId)
+                : turnCancellationGuard.isCancelled(turnId);
+    }
+
+    private void throwIfCancelled(String turnId) {
+        if (isCancelled(turnId)) {
+            throw new TurnCancelledException(turnId);
+        }
     }
 }

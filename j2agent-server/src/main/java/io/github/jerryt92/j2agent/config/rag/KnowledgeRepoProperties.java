@@ -18,6 +18,10 @@ public class KnowledgeRepoProperties {
      */
     private String rootPath = "";
     /**
+     * 是否在应用启动时执行知识库初始化同步。
+     */
+    private boolean startupSyncEnabled = true;
+    /**
      * 是否开启目录监听。
      */
     private boolean watchEnabled = true;

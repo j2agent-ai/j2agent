@@ -154,6 +154,21 @@ j2agent:
       content-segment-overlap-chars: 50
   chat-input:
     max-user-message-length: 32768
+  chat-queue:
+    # 是否启用聊天输入 Redis 队列；启用后 WebSocket 输入先入队，再由 worker 消费调用 ChatService
+    enabled: true
+    # 聊天输入队列 worker 数量；不同 contextId + agentId 可并发消费
+    worker-count: 8
+    # 单个 contextId + agentId 最多允许排队的任务数，超过后立即向前端返回队列满失败事件
+    max-pending-per-session: 3
+    # worker 被 ready 队列唤醒后，从具体会话队列等待任务的最长时间（秒）
+    take-timeout-seconds: 5
+    # 空闲会话输入队列 key 的兜底 TTL（秒）
+    queued-task-ttl-seconds: 300
+    # 是否启用 output 事件 Redis 短期缓存，用于后续断线重连按 seq 补发
+    output-cache-enabled: true
+    # output 事件缓存 TTL（秒）
+    output-cache-ttl-seconds: 300
   active-chat-turn:
     heartbeat-ttl-seconds: 30
     heartbeat-touch-interval-seconds: 10
