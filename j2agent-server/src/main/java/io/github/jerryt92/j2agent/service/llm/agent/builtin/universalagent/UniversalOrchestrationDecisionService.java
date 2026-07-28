@@ -5,12 +5,14 @@ import com.alibaba.fastjson2.JSONObject;
 import io.github.jerryt92.j2agent.service.llm.LlmSyncService;
 import io.github.jerryt92.j2agent.service.llm.agent.builtin.OrchestrationTraceEntry;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
+import io.github.jerryt92.j2agent.service.llm.chat.TurnCancellationGuard;
 import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -35,9 +37,17 @@ public class UniversalOrchestrationDecisionService {
             5. 使用与用户相同的语言撰写 reason""";
 
     private final LlmSyncService llmSyncService;
+    private final TurnCancellationGuard turnCancellationGuard;
 
     public UniversalOrchestrationDecisionService(LlmSyncService llmSyncService) {
+        this(llmSyncService, null);
+    }
+
+    @Autowired
+    public UniversalOrchestrationDecisionService(LlmSyncService llmSyncService,
+                                                 TurnCancellationGuard turnCancellationGuard) {
         this.llmSyncService = llmSyncService;
+        this.turnCancellationGuard = turnCancellationGuard;
     }
 
     public OrchestrationDecision decide(
@@ -67,9 +77,7 @@ public class UniversalOrchestrationDecisionService {
             boolean forceComplete,
             String turnId,
             String conversationId) {
-        if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
-            throw new TurnCancelledException(turnId);
-        }
+        throwIfCancelled(turnId);
         if (forceComplete) {
             return OrchestrationDecision.complete("max rounds reached");
         }
@@ -102,15 +110,23 @@ public class UniversalOrchestrationDecisionService {
                     new SystemMessage(DECISION_SYSTEM_PROMPT),
                     new UserMessage(userBlock)));
             String raw = llmSyncService.callAssistantText(prompt, conversationId);
-            if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
-                throw new TurnCancelledException(turnId);
-            }
+            throwIfCancelled(turnId);
             return parseDecision(raw);
         } catch (TurnCancelledException ex) {
             throw ex;
         } catch (Exception ex) {
             log.warn("orchestration decision LLM failed: {}", ex.toString());
             return OrchestrationDecision.complete("decision LLM error");
+        }
+    }
+
+    private void throwIfCancelled(String turnId) {
+        if (turnCancellationGuard != null) {
+            turnCancellationGuard.throwIfCancelled(turnId);
+            return;
+        }
+        if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
+            throw new TurnCancelledException(turnId);
         }
     }
 

@@ -271,6 +271,11 @@ public class KnowledgeRepositoryService {
             po.setLastError(null);
             po.setUpdatedAt(doneAt);
             mapper.updateSyncResult(po);
+            if (!properties.isWatchEnabled()) {
+                log.info("知识库仓库同步完成，跳过知识库增量同步: repoCode={}, trigger={}, revision={}, watchEnabled=false",
+                        po.getRepoCode(), trigger, result.revision());
+                return;
+            }
             KnowledgeRepoSyncOutcome outcome = maintenanceCoordinator.syncNowAsync(false);
             if (!outcome.succeeded()) {
                 throw new IllegalStateException(outcome.message());

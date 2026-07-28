@@ -4,6 +4,10 @@ import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamOptions;
 import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamSession;
 import io.github.jerryt92.j2agent.config.chat.ActiveChatTurnProperties;
 import io.github.jerryt92.j2agent.config.chat.ChatInputProperties;
+import io.github.jerryt92.j2agent.logging.llm.AgentRunEventType;
+import io.github.jerryt92.j2agent.logging.llm.AgentRunLogContext;
+import io.github.jerryt92.j2agent.logging.llm.AgentRunLogSnapshot;
+import io.github.jerryt92.j2agent.logging.llm.AgentRunLogger;
 import io.github.jerryt92.j2agent.model.AgentEventPhase;
 import io.github.jerryt92.j2agent.model.AgentEventType;
 import io.github.jerryt92.j2agent.model.AgentState;
@@ -21,21 +25,19 @@ import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.constant.AgentThinkingOverride;
 import io.github.jerryt92.j2agent.service.llm.memory.ChatMemoryMessageCodec;
 import io.github.jerryt92.j2agent.service.llm.memory.ConversationIdCodec;
-import io.github.jerryt92.j2agent.service.llm.reasoning.SpringAiReasoningMetadataAdapter;
-import io.github.jerryt92.j2agent.logging.llm.AgentRunEventType;
-import io.github.jerryt92.j2agent.logging.llm.AgentRunLogContext;
-import io.github.jerryt92.j2agent.logging.llm.AgentRunLogSnapshot;
-import io.github.jerryt92.j2agent.logging.llm.AgentRunLogger;
+import io.github.jerryt92.j2agent.service.llm.queue.ChatOutputEventCache;
 import io.github.jerryt92.j2agent.service.llm.rag.TurnRagSourceRegistry;
 import io.github.jerryt92.j2agent.service.question.TurnAskQuestionRegistry;
+import io.github.jerryt92.j2agent.service.llm.reasoning.SpringAiReasoningMetadataAdapter;
 import io.github.jerryt92.j2agent.service.llm.tool.ToolEventEmitter;
 import io.github.jerryt92.j2agent.service.llm.usage.TurnUsageAccumulator;
 import io.github.jerryt92.j2agent.service.llm.usage.TurnUsageContext;
-import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
-import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnLifecycle;
-import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
 import io.github.jerryt92.j2agent.service.llm.agent.builtin.SubAgentStreamBridge;
 import io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent.UniversalAssistantOrchestratorService;
+import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
+import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnLifecycle;
+import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnControlService;
+import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
 import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
 import io.github.jerryt92.j2agent.utils.UUIDv7Utils;
 import lombok.extern.slf4j.Slf4j;
@@ -67,13 +69,14 @@ public class ChatService {
     private final ChatInputProperties chatInputProperties;
     private final ActiveChatTurnProperties activeChatTurnProperties;
     private final ActiveChatTurnRegistry activeChatTurnRegistry;
-    static Map<String, ChatCallback<AgentUiEventEnvelope>> contextChatCallbackMap = new HashMap<>();
     private final AgentRouter agentRouter;
     private final ChatMemoryMessageCodec chatMemoryMessageCodec;
     private final ObjectProvider<io.github.jerryt92.j2agent.service.file.oss.ChatAttachmentService>
             chatAttachmentServiceProvider;
     private final AgentStreamSession agentStreamSession;
     private final UniversalAssistantOrchestratorService universalAssistantOrchestratorService;
+    private final ChatOutputEventCache chatOutputEventCache;
+    private final ChatTurnControlService chatTurnControlService;
 
     public ChatService(ChatContextService chatContextService,
                        AgentRouter agentRouter,
@@ -84,7 +87,9 @@ public class ChatService {
                        ObjectProvider<io.github.jerryt92.j2agent.service.file.oss.ChatAttachmentService>
                                chatAttachmentServiceProvider,
                        AgentStreamSession agentStreamSession,
-                       UniversalAssistantOrchestratorService universalAssistantOrchestratorService) {
+                       UniversalAssistantOrchestratorService universalAssistantOrchestratorService,
+                       ChatOutputEventCache chatOutputEventCache,
+                       ChatTurnControlService chatTurnControlService) {
         this.chatContextService = chatContextService;
         this.agentRouter = agentRouter;
         this.chatInputProperties = chatInputProperties;
@@ -94,14 +99,8 @@ public class ChatService {
         this.chatAttachmentServiceProvider = chatAttachmentServiceProvider;
         this.agentStreamSession = agentStreamSession;
         this.universalAssistantOrchestratorService = universalAssistantOrchestratorService;
-    }
-
-    public static void registerContextChatCallback(String contextId, ChatCallback<AgentUiEventEnvelope> callback) {
-        contextChatCallbackMap.put(contextId, callback);
-    }
-
-    public static void unregisterContextChatCallback(String contextId) {
-        contextChatCallbackMap.remove(contextId);
+        this.chatOutputEventCache = chatOutputEventCache;
+        this.chatTurnControlService = chatTurnControlService;
     }
 
     public void handleChat(
@@ -137,25 +136,28 @@ public class ChatService {
                 turnTraceFlushed);
         final AtomicReference<String> resolvedAgentIdRef = new AtomicReference<>(null);
         try {
-            contextChatCallbackMap.put(contextId, chatChatCallback);
             if (CollectionUtils.isEmpty(request.getMessages())) {
                 terminateTurnWithFailure(chatChatCallback, contextId, turnId, seq, stateMachine, turnLock,
-                        terminated, originalCompleteCall, "emptyMessages", null, null, flushTurnTrace,
-                        () -> contextChatCallbackMap.remove(contextId));
+                        terminated, originalCompleteCall, "emptyMessages", null, null, flushTurnTrace, null);
                 return;
             }
             final AiAgent aiAgentForConversation = agentRouter.route(agentId);
             final String resolvedAgentId = aiAgentForConversation.getAgentId();
             resolvedAgentIdRef.set(resolvedAgentId);
             activeChatTurnRegistry.register(contextId, resolvedAgentId);
+            chatTurnControlService.registerTurn(contextId, resolvedAgentId, turnId, null);
+            if (!resolvedAgentId.equals(agentId)) {
+                chatTurnControlService.registerTurn(contextId, agentId, turnId, null);
+            }
             AtomicLong lastHeartbeatTouchMs = new AtomicLong(0L);
             int heartbeatTouchIntervalMs = activeChatTurnProperties.getHeartbeatTouchIntervalSeconds() * 1000;
             Consumer<AgentUiEventEnvelope> recordingResponseCall = envelope -> {
-                if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
+                if (isTurnCancelled(turnId)) {
                     turnStepRecorder.record(envelope);
                     return;
                 }
                 turnStepRecorder.record(envelope);
+                chatOutputEventCache.saveStateTrailEvent(contextId, resolvedAgentId, envelope);
                 long now = System.currentTimeMillis();
                 long last = lastHeartbeatTouchMs.get();
                 if (now - last >= heartbeatTouchIntervalMs && lastHeartbeatTouchMs.compareAndSet(last, now)) {
@@ -174,7 +176,10 @@ public class ChatService {
                         AgentRunLogContext.clear(conversationId);
                     }
                     activeChatTurnRegistry.unregister(contextId, resolvedAgentId);
-                    contextChatCallbackMap.remove(contextId);
+                    chatTurnControlService.unregisterTurn(contextId, resolvedAgentId, turnId);
+                    if (!resolvedAgentId.equals(agentId)) {
+                        chatTurnControlService.unregisterTurn(contextId, agentId, turnId);
+                    }
                 }
             };
             final String turnConversationId = buildConversationId(userId, contextId, resolvedAgentId);
@@ -235,10 +240,12 @@ public class ChatService {
                 SubAgentStreamBridge.bind(turnId, new SubAgentStreamBridge.Target(
                         chatChatCallback,
                         contextId,
+                        resolvedAgentId,
                         turnId,
                         userId,
                         turnConversationId,
                         toolEventEmitter,
+                        chatOutputEventCache,
                         seq,
                         stateMachine,
                         turnLock,
@@ -330,6 +337,7 @@ public class ChatService {
                         ChatTurnCancellationRegistry.clear(turnId);
                         logTurnEnd(runLogSnapshot, streamStartedAtMs, turnStepRecorder, AgentState.COMPLETED);
                         flushTurnTrace.run();
+                        chatOutputEventCache.clearSnapshot(contextId, resolvedAgentId);
                         runOriginalCompleteCall(originalCompleteCall);
                         releaseActiveTurn.run();
                     }
@@ -381,6 +389,7 @@ public class ChatService {
                             TurnAskQuestionRegistry.clear(turnConversationId);
                             SubAgentStreamBridge.unbind(turnId);
                             ChatTurnCancellationRegistry.clear(turnId);
+                            chatOutputEventCache.clearSnapshot(contextId, resolvedAgentId);
                         },
                         flushTurnTrace,
                         releaseActiveTurn);
@@ -401,6 +410,7 @@ public class ChatService {
                     TurnAskQuestionRegistry.clear(turnConversationId);
                     SubAgentStreamBridge.unbind(turnId);
                     logTurnEnd(runLogSnapshot, streamStartedAtMs, turnStepRecorder, AgentState.CANCELLED);
+                    chatOutputEventCache.clearSnapshot(contextId, resolvedAgentId);
                     synchronized (turnLock) {
                         if (stateMachine.getState() != AgentState.COMPLETED
                                 && stateMachine.getState() != AgentState.FAILED
@@ -425,6 +435,10 @@ public class ChatService {
                 }
             };
             chatChatCallback.onWebsocketClose = runWebsocketAbort;
+            chatTurnControlService.registerTurn(contextId, resolvedAgentId, turnId, runWebsocketAbort);
+            if (!resolvedAgentId.equals(agentId)) {
+                chatTurnControlService.registerTurn(contextId, agentId, turnId, runWebsocketAbort);
+            }
             // 流式接收
             synchronized (turnLock) {
                 AgentStateTransition toThinking = stateMachine.transit(AgentState.THINKING, "userMessageAccepted");
@@ -502,6 +516,7 @@ public class ChatService {
                     .subscribe(parts -> emitAnswerDelta(
                             chatChatCallback,
                             contextId,
+                            resolvedAgentId,
                             turnId,
                             seq,
                             stateMachine,
@@ -514,7 +529,7 @@ public class ChatService {
                             parts.reasoningDelta()),
                             chatChatCallback.errorCall,
                             chatChatCallback.completeCall);
-            ChatTurnCancellationRegistry.registerDisposable(turnId, disposable);
+            chatTurnControlService.registerDisposable(turnId, disposable);
         } catch (Throwable t) {
             String failedConversationId = conversationIdRef.get();
             AgentRunLogSnapshot failedSnapshot = failedConversationId == null
@@ -542,8 +557,11 @@ public class ChatService {
                 String resolvedAgentId = resolvedAgentIdRef.get();
                 if (resolvedAgentId != null) {
                     activeChatTurnRegistry.unregister(contextId, resolvedAgentId);
+                    chatTurnControlService.unregisterTurn(contextId, resolvedAgentId, turnId);
+                    if (!resolvedAgentId.equals(agentId)) {
+                        chatTurnControlService.unregisterTurn(contextId, agentId, turnId);
+                    }
                 }
-                contextChatCallbackMap.remove(contextId);
             };
             terminateTurnWithFailure(chatChatCallback, contextId, turnId, seq, stateMachine, turnLock,
                     terminated, originalCompleteCall, resolveErrorCode(t), t, null, flushTurnTrace,
@@ -553,6 +571,7 @@ public class ChatService {
 
     private void emitAnswerDelta(ChatCallback<AgentUiEventEnvelope> chatChatCallback,
                                  String contextId,
+                                 String agentId,
                                  String turnId,
                                  AtomicLong seq,
                                  AgentTurnStateMachine stateMachine,
@@ -579,6 +598,13 @@ public class ChatService {
             if (StringUtils.isNotBlank(reasoningDelta)) {
                 streamedReasoning.append(reasoningDelta);
             }
+            chatOutputEventCache.saveSnapshot(
+                    contextId,
+                    agentId,
+                    turnId,
+                    streamedContent.toString(),
+                    streamedReasoning.toString(),
+                    stateMachine.getState());
         }
         synchronized (turnLock) {
             AgentStateTransition transition = null;
@@ -658,8 +684,8 @@ public class ChatService {
         }
     }
 
-    private static boolean isBenignTurnInterruption(Throwable t, String turnId) {
-        if (ChatTurnCancellationRegistry.isCancelled(turnId)) {
+    private boolean isBenignTurnInterruption(Throwable t, String turnId) {
+        if (isTurnCancelled(turnId)) {
             return true;
         }
         if (Exceptions.isCancel(t)) {
@@ -680,6 +706,11 @@ public class ChatService {
             cursor = cursor.getCause();
         }
         return false;
+    }
+
+    private boolean isTurnCancelled(String turnId) {
+        return ChatTurnCancellationRegistry.isCancelled(turnId)
+                || chatTurnControlService.isTurnCancelled(turnId);
     }
 
     /**
@@ -797,11 +828,9 @@ public class ChatService {
         return buildStreamedAssistantMessage(content, reasoning, addEllipsis, ragInfosJson, null);
     }
 
-    /**
-     * 构造流式落库用的 assistant 消息，可附带 pendingQuestion 元数据。
-     */
     static AssistantMessage buildStreamedAssistantMessage(String content, String reasoning, boolean addEllipsis,
-                                                          String ragInfosJson, String pendingQuestionJson) {
+                                                          String ragInfosJson,
+                                                          String pendingQuestionJson) {
         String finalContent = content != null ? content : "";
         if (addEllipsis && StringUtils.isNotBlank(finalContent)) {
             finalContent = finalContent + "...";

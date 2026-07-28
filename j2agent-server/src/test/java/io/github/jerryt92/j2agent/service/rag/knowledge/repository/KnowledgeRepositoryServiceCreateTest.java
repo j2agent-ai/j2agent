@@ -13,9 +13,12 @@ import org.springframework.web.server.ResponseStatusException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * KnowledgeRepositoryService 创建逻辑：同 URL 不同目录名可并存，目录名冲突拒绝。
@@ -78,15 +81,50 @@ class KnowledgeRepositoryServiceCreateTest {
         assertEquals(true, po.getEnabled());
     }
 
+    @Test
+    void remoteSyncSkipsKnowledgeIncrementalSyncWhenWatchDisabled() throws Exception {
+        FakeKnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper();
+        KnowledgeRepoProperties properties = properties();
+        properties.setWatchEnabled(false);
+        CountingKnowledgeRepoMaintenanceCoordinator coordinator = new CountingKnowledgeRepoMaintenanceCoordinator();
+        KnowledgeRepositoryService service = service(mapper, properties, coordinator);
+
+        service.create(request("kb-docs", "https://example.com/docs.git"));
+
+        assertTrue(await(() -> mapper.rows.getFirst().getLastRevision() != null));
+        assertEquals(KnowledgeRepositoryConstants.STATUS_SYNCED, mapper.rows.getFirst().getStatus());
+        assertEquals(0, coordinator.syncNowAsyncCalls.get());
+    }
+
     private KnowledgeRepositoryService service(FakeKnowledgeRepositoryMapper mapper) {
-        KnowledgeRepoProperties properties = new KnowledgeRepoProperties();
-        properties.setRootPath(tempDir.resolve("knowledge-repo").toString());
+        return service(mapper, properties(), new FakeKnowledgeRepoMaintenanceCoordinator());
+    }
+
+    private KnowledgeRepositoryService service(FakeKnowledgeRepositoryMapper mapper,
+                                               KnowledgeRepoProperties properties,
+                                               KnowledgeRepoMaintenanceCoordinator coordinator) {
         KnowledgeRepositoryCredentialCipher cipher = new KnowledgeRepositoryCredentialCipher(properties);
-        KnowledgeRepoMaintenanceCoordinator coordinator = new FakeKnowledgeRepoMaintenanceCoordinator();
         KnowledgeRepositorySyncer syncer = new SuccessfulSyncer();
         KnowledgeRepositoryAutoRegistrar autoRegistrar = new KnowledgeRepositoryAutoRegistrar(mapper, properties);
         return new KnowledgeRepositoryService(
                 mapper, properties, coordinator, cipher, autoRegistrar, List.of(syncer));
+    }
+
+    private KnowledgeRepoProperties properties() {
+        KnowledgeRepoProperties properties = new KnowledgeRepoProperties();
+        properties.setRootPath(tempDir.resolve("knowledge-repo").toString());
+        return properties;
+    }
+
+    private boolean await(BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (condition.getAsBoolean()) {
+                return true;
+            }
+            TimeUnit.MILLISECONDS.sleep(20);
+        }
+        return condition.getAsBoolean();
     }
 
     private KnowledgeRepositoryDtos.UpsertRequest request(String repoCode, String remoteUrl) {
@@ -124,6 +162,25 @@ class KnowledgeRepositoryServiceCreateTest {
         public KnowledgeRepoSyncOutcome syncNowAsync(boolean fullRebuild) {
             return KnowledgeRepoSyncOutcome.accepted("queued");
         }
+    }
+
+    private static class CountingKnowledgeRepoMaintenanceCoordinator extends KnowledgeRepoMaintenanceCoordinator {
+        private final AtomicInteger syncNowAsyncCalls = new AtomicInteger();
+
+        private CountingKnowledgeRepoMaintenanceCoordinator() {
+            super(null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        public KnowledgeRepoSyncOutcome syncNowAsync(boolean fullRebuild) {
+            syncNowAsyncCalls.incrementAndGet();
+            return KnowledgeRepoSyncOutcome.accepted("queued");
+        }
+    }
+
+    @FunctionalInterface
+    private interface BooleanSupplier {
+        boolean getAsBoolean();
     }
 
     private static class SuccessfulSyncer implements KnowledgeRepositorySyncer {

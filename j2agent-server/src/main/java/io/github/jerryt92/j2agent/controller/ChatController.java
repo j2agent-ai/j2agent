@@ -21,10 +21,19 @@ import io.github.jerryt92.j2agent.server.api.ChatApi;
 import io.github.jerryt92.j2agent.service.file.oss.ChatAttachmentUrlResolver;
 import io.github.jerryt92.j2agent.service.llm.AgentEventBuilder;
 import io.github.jerryt92.j2agent.service.llm.AgentTurnStateMachine;
+import io.github.jerryt92.j2agent.service.llm.ActiveChatTurnRegistry;
 import io.github.jerryt92.j2agent.service.llm.ChatContextBo;
 import io.github.jerryt92.j2agent.service.llm.ChatContextService;
 import io.github.jerryt92.j2agent.service.llm.ChatService;
+import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnControlService;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
+import io.github.jerryt92.j2agent.service.llm.queue.ChatCallbackRegistry;
+import io.github.jerryt92.j2agent.service.llm.queue.ChatEnqueueResult;
+import io.github.jerryt92.j2agent.service.llm.queue.ChatInputQueueManager;
+import io.github.jerryt92.j2agent.service.llm.queue.ChatOutputEventCache;
+import io.github.jerryt92.j2agent.service.llm.queue.ChatOutputDispatcher;
+import io.github.jerryt92.j2agent.service.llm.queue.ChatOutputSnapshot;
+import io.github.jerryt92.j2agent.service.llm.queue.ChatTurnInputTask;
 import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
 import io.github.jerryt92.j2agent.service.security.LoginService;
 import io.github.jerryt92.j2agent.utils.UUIDv7Utils;
@@ -35,6 +44,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -44,6 +55,7 @@ import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 @Log4j2
@@ -58,15 +70,33 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
     private final ChatService chatService;
     private final LoginService loginService;
     private final AgentRouter agentRouter;
+    private final ChatCallbackRegistry chatCallbackRegistry;
+    private final ChatInputQueueManager chatInputQueueManager;
+    private final ChatOutputDispatcher chatOutputDispatcher;
+    private final ChatOutputEventCache chatOutputEventCache;
+    private final ActiveChatTurnRegistry activeChatTurnRegistry;
+    private final ChatTurnControlService chatTurnControlService;
     @Autowired(required = false)
     private ChatAttachmentUrlResolver chatAttachmentUrlResolver;
 
     public ChatController(ChatContextService chatContextService, ChatService chatService, LoginService loginService,
-                          AgentRouter agentRouter) {
+                          AgentRouter agentRouter,
+                          ChatCallbackRegistry chatCallbackRegistry,
+                          ChatInputQueueManager chatInputQueueManager,
+                          ChatOutputDispatcher chatOutputDispatcher,
+                          ChatOutputEventCache chatOutputEventCache,
+                          ActiveChatTurnRegistry activeChatTurnRegistry,
+                          ChatTurnControlService chatTurnControlService) {
         this.chatContextService = chatContextService;
         this.chatService = chatService;
         this.loginService = loginService;
         this.agentRouter = agentRouter;
+        this.chatCallbackRegistry = chatCallbackRegistry;
+        this.chatInputQueueManager = chatInputQueueManager;
+        this.chatOutputDispatcher = chatOutputDispatcher;
+        this.chatOutputEventCache = chatOutputEventCache;
+        this.activeChatTurnRegistry = activeChatTurnRegistry;
+        this.chatTurnControlService = chatTurnControlService;
     }
 
     @Override
@@ -131,6 +161,23 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
         return ResponseEntity.ok().build();
     }
 
+    @PostMapping("/v1/rest/j2agent/chat/stop")
+    public ResponseEntity<Void> stopChatTurn(@RequestParam("context-id") String contextId,
+                                             @RequestParam("agent-id") String agentId) {
+        UserContextBo session = loginService.getSession();
+        if (session == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "login is required");
+        }
+        if (StringUtils.isBlank(contextId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "context-id is required");
+        }
+        if (StringUtils.isBlank(agentId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "agent-id is required");
+        }
+        stopSession(contextId, agentId);
+        return ResponseEntity.ok().build();
+    }
+
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         String contextId = getParam("context-id", Objects.requireNonNull(session.getUri()).toString());
@@ -147,11 +194,19 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
         }
         session.getAttributes().put("contextId", contextId);
         session.getAttributes().put(AGENT_ID_ATTRIBUTE, agentId);
-        session.getAttributes().put("callback", new ChatCallback<AgentUiEventEnvelope>(UUIDv7Utils.randomUUIDv7()));
+        ChatCallback<AgentUiEventEnvelope> callback = new ChatCallback<>(UUIDv7Utils.randomUUIDv7());
+        session.getAttributes().put("callback", callback);
         UserContextBo userContextBo = (UserContextBo) session.getAttributes().get(LoginService.LOGIN_ATTRIBUTE);
         if (userContextBo == null) {
             sendHandshakeFailure(session, contextId, "loginMissing", "login is required");
             closeSession(session);
+            return;
+        }
+        bindWebSocketCallback(session, callback);
+        if (isTrue(getParam("resume", Objects.requireNonNull(session.getUri()).toString()))) {
+            chatCallbackRegistry.register(contextId, agentId, callback.subscriptionId, callback);
+            sendConnectedNotice(session, contextId);
+            handleResumeConnection(contextId, agentId, callback.subscriptionId);
         }
     }
 
@@ -177,6 +232,35 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
         }
         UserContextBo userContextBo = (UserContextBo) wsSession.getAttributes().get(LoginService.LOGIN_ATTRIBUTE);
         ChatCallback<AgentUiEventEnvelope> chatChatCallback = getChatCallback(wsSession);
+        String agentId = (String) wsSession.getAttributes().get(AGENT_ID_ATTRIBUTE);
+        if (StringUtils.isBlank(chatRequestDto.getContextId())) {
+            chatRequestDto.setContextId(contextId);
+        }
+        bindWebSocketCallback(wsSession, chatChatCallback);
+        chatCallbackRegistry.register(contextId, agentId, chatChatCallback.subscriptionId, chatChatCallback);
+        chatCallbackRegistry.clearSessionCancelled(contextId, agentId);
+        ChatTurnInputTask task = new ChatTurnInputTask(
+                contextId,
+                agentId,
+                chatChatCallback.subscriptionId,
+                UUIDv7Utils.randomUUIDv7(),
+                chatRequestDto,
+                userContextBo,
+                System.currentTimeMillis());
+        ChatEnqueueResult enqueueResult = chatInputQueueManager.enqueue(task);
+        if (enqueueResult.status() == ChatEnqueueResult.Status.ENQUEUED) {
+            return;
+        }
+        if (enqueueResult.status() == ChatEnqueueResult.Status.DISABLED) {
+            chatService.handleChat(chatChatCallback, chatRequestDto, userContextBo, agentId);
+            return;
+        }
+        chatOutputDispatcher.fail(contextId, agentId, chatChatCallback.subscriptionId,
+                enqueueResult.errorCode(), new IllegalStateException(enqueueResult.errorMessage()));
+    }
+
+    private void bindWebSocketCallback(WebSocketSession wsSession,
+                                       ChatCallback<AgentUiEventEnvelope> chatChatCallback) {
         chatChatCallback.responseCall = chatResponse -> {
             if (!wsSession.isOpen()) {
                 return;
@@ -184,25 +268,98 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
             try {
                 wsSession.sendMessage(new TextMessage(JSONObject.toJSONString(chatResponse)));
             } catch (IllegalStateException ex) {
-                // 客户端已主动关闭（含打断后不再收「猜你想问」）时常见，不应打 error 栈或重复收尾
                 if (log.isDebugEnabled()) {
                     log.debug("WebSocket 已关闭，跳过事件下发: {}", ex.getMessage());
                 }
             } catch (IOException ex) {
                 log.warn("WebSocket 写入失败: {}", ex.getMessage());
-                if (chatChatCallback.onWebsocketClose != null) {
-                    chatChatCallback.onWebsocketClose.run();
-                }
                 closeSession(wsSession);
             }
         };
         chatChatCallback.completeCall = () -> closeSession(wsSession);
-        String agentId = (String) wsSession.getAttributes().get(AGENT_ID_ATTRIBUTE);
-        chatService.handleChat(
-                chatChatCallback,
-                chatRequestDto,
-                userContextBo,
-                agentId);
+    }
+
+    private void sendConnectedNotice(WebSocketSession session, String contextId) {
+        try {
+            AgentUiEventEnvelope agentUiEventEnvelope = new AgentUiEventEnvelope()
+                    .setContextId(contextId)
+                    .setTurnId(UUIDv7Utils.randomUUIDv7())
+                    .setSeq(0L)
+                    .setState(AgentState.IDLE)
+                    .setPhase(AgentEventPhase.START)
+                    .setEventType(AgentEventType.SYSTEM)
+                    .setTransition(new AgentStateTransition().setFrom(AgentState.IDLE).setTo(AgentState.IDLE).setReason("wsConnected"))
+                    .setPayload(new HashMap<>(java.util.Map.of("notice", "connected")))
+                    .setTs(System.currentTimeMillis())
+                    .setEventId(UUIDv7Utils.randomUUIDv7());
+            session.sendMessage(new TextMessage(JSONObject.toJSONString(agentUiEventEnvelope)));
+        } catch (IOException e) {
+            closeSession(session);
+        }
+    }
+
+    private void handleResumeConnection(String contextId, String agentId, String subscriptionId) {
+        if (sendSnapshotIfPresent(contextId, agentId, subscriptionId)) {
+            return;
+        }
+        if (activeChatTurnRegistry.isActive(contextId, agentId) || chatInputQueueManager.size(contextId, agentId) > 0) {
+            return;
+        }
+        AgentUiEventEnvelope envelope = AgentEventBuilder.build(
+                contextId,
+                UUIDv7Utils.randomUUIDv7(),
+                0L,
+                AgentState.COMPLETED,
+                null,
+                AgentEventPhase.COMPLETE,
+                AgentEventType.SYSTEM,
+                new HashMap<>(Map.of("notice", "resume-empty")));
+        chatOutputDispatcher.dispatch(contextId, agentId, subscriptionId, envelope);
+        chatOutputDispatcher.complete(contextId, agentId, subscriptionId);
+    }
+
+    private boolean sendSnapshotIfPresent(String contextId, String agentId, String subscriptionId) {
+        ChatOutputSnapshot snapshot = chatOutputEventCache.getSnapshot(contextId, agentId);
+        if (snapshot == null || StringUtils.isBlank(snapshot.getTurnId())) {
+            return false;
+        }
+        long seq = 0L;
+        if (snapshot.getStateTrail() != null) {
+            for (ChatOutputSnapshot.StateTrailItem item : snapshot.getStateTrail()) {
+                if (item == null || item.getState() == null) {
+                    continue;
+                }
+                AgentUiEventEnvelope stateEnvelope = AgentEventBuilder.build(
+                        contextId,
+                        snapshot.getTurnId(),
+                        seq++,
+                        item.getState(),
+                        item.getTransition(),
+                        item.getPhase(),
+                        item.getEventType(),
+                        item.getPayload());
+                if (item.getTs() > 0) {
+                    stateEnvelope.setTs(item.getTs());
+                }
+                chatOutputDispatcher.dispatch(contextId, agentId, subscriptionId, stateEnvelope);
+            }
+        }
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("snapshot", true);
+        payload.put("answerContent", StringUtils.defaultString(snapshot.getAnswerContent()));
+        payload.put("reasoningContent", StringUtils.defaultString(snapshot.getReasoningContent()));
+        payload.put("updatedAt", snapshot.getUpdatedAt());
+        AgentUiEventEnvelope envelope = AgentEventBuilder.build(
+                contextId,
+                snapshot.getTurnId(),
+                seq,
+                snapshot.getState() == null ? AgentState.STREAMING_TEXT : snapshot.getState(),
+                null,
+                AgentEventPhase.DELTA,
+                AgentEventType.MESSAGE,
+                payload);
+        chatOutputDispatcher.dispatch(contextId, agentId, subscriptionId, envelope);
+        return true;
     }
 
     /**
@@ -251,13 +408,40 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
-        ChatCallback<AgentUiEventEnvelope> chatCallback = getChatCallback(session);
-        if (chatCallback.onWebsocketClose != null) {
+        String contextId = (String) session.getAttributes().get("contextId");
+        String agentId = (String) session.getAttributes().get(AGENT_ID_ATTRIBUTE);
+        ChatCallback<AgentUiEventEnvelope> chatCallback = getNullableChatCallback(session);
+        if (chatCallback == null) {
+            super.afterConnectionClosed(session, status);
+            return;
+        }
+        if (StringUtils.isNotBlank(contextId) && StringUtils.isNotBlank(agentId)) {
+            if ("user interrupt".equals(status.getReason())) {
+                chatCallbackRegistry.markCancelled(contextId, agentId, chatCallback.subscriptionId);
+                stopSession(contextId, agentId);
+            }
+            chatCallbackRegistry.unregister(contextId, agentId, chatCallback.subscriptionId);
+        } else if (chatCallback.onWebsocketClose != null) {
             chatCallback.onWebsocketClose.run();
-        } else {
-            log.warn("WebSocket closed but onWebsocketClose is null (sessionId={})", session.getId());
         }
         super.afterConnectionClosed(session, status);
+    }
+
+    private void stopSession(String contextId, String agentId) {
+        boolean firstSessionCancel = chatCallbackRegistry.markSessionCancelled(contextId, agentId);
+        String cancelledTurnId = chatTurnControlService.cancelSession(contextId, agentId, "user interrupt");
+        if (firstSessionCancel || StringUtils.isNotBlank(cancelledTurnId)) {
+            chatOutputDispatcher.cancelSession(contextId, agentId, cancelledTurnId);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private ChatCallback<AgentUiEventEnvelope> getNullableChatCallback(WebSocketSession session) {
+        Object callbackObj = session.getAttributes().get("callback");
+        if (callbackObj instanceof ChatCallback) {
+            return (ChatCallback<AgentUiEventEnvelope>) callbackObj;
+        }
+        return null;
     }
 
     private static String getParam(String param, String url) {
@@ -276,5 +460,9 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
             }
         }
         return null;
+    }
+
+    private static boolean isTrue(String value) {
+        return "true".equalsIgnoreCase(StringUtils.trimToEmpty(value));
     }
 }

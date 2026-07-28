@@ -4,6 +4,7 @@ import io.github.jerryt92.j2agent.model.AgentUiEventEnvelope;
 import io.github.jerryt92.j2agent.model.ChatCallback;
 import io.github.jerryt92.j2agent.service.llm.AgentTurnStateMachine;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnLifecycle;
+import io.github.jerryt92.j2agent.service.llm.queue.ChatOutputEventCache;
 import io.github.jerryt92.j2agent.service.llm.tool.ToolEventEmitter;
 import org.apache.commons.lang3.StringUtils;
 
@@ -24,10 +25,12 @@ public final class SubAgentStreamBridge {
     public record Target(
             ChatCallback<AgentUiEventEnvelope> chatCallback,
             String contextId,
+            String agentId,
             String turnId,
             String userId,
             String parentConversationId,
             ToolEventEmitter toolEventEmitter,
+            ChatOutputEventCache outputEventCache,
             AtomicLong seq,
             AgentTurnStateMachine stateMachine,
             Object turnLock,
@@ -39,6 +42,7 @@ public final class SubAgentStreamBridge {
         public void emitDelta(String answerDelta, String reasoningDelta) {
             if (chatCallback == null) {
                 appendStreamedDelta(answerDelta, reasoningDelta);
+                saveSnapshot();
                 return;
             }
             ChatTurnLifecycle.emitAnswerDelta(
@@ -54,6 +58,7 @@ public final class SubAgentStreamBridge {
                     messageIndex,
                     answerDelta,
                     reasoningDelta);
+            saveSnapshot();
         }
 
         private void appendStreamedDelta(String answerDelta, String reasoningDelta) {
@@ -64,6 +69,21 @@ public final class SubAgentStreamBridge {
                 if (StringUtils.isNotBlank(reasoningDelta)) {
                     streamedReasoning.append(reasoningDelta);
                 }
+            }
+        }
+
+        private void saveSnapshot() {
+            if (outputEventCache == null) {
+                return;
+            }
+            synchronized (streamedTextLock) {
+                outputEventCache.saveSnapshot(
+                        contextId,
+                        agentId,
+                        turnId,
+                        streamedContent.toString(),
+                        streamedReasoning.toString(),
+                        stateMachine == null ? null : stateMachine.getState());
             }
         }
     }

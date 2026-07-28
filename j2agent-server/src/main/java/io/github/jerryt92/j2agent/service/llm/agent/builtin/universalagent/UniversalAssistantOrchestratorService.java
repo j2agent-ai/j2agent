@@ -6,13 +6,14 @@ import io.github.jerryt92.j2agent.service.llm.agent.builtin.OrchestrationTraceEn
 import io.github.jerryt92.j2agent.service.llm.agent.builtin.SubAgentCallNames;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
-import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
+import io.github.jerryt92.j2agent.service.llm.chat.TurnCancellationGuard;
 import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
 import io.github.jerryt92.j2agent.service.llm.tool.ToolEventEmitter;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -36,6 +37,7 @@ public class UniversalAssistantOrchestratorService {
     private final UniversalSubAgentCallService subAgentCallService;
     private final AgentRouter agentRouter;
     private final ChatMemory chatMemory;
+    private final TurnCancellationGuard turnCancellationGuard;
 
     public UniversalAssistantOrchestratorService(
             UniversalIntentQueryService intentQueryService,
@@ -43,11 +45,23 @@ public class UniversalAssistantOrchestratorService {
             UniversalSubAgentCallService subAgentCallService,
             AgentRouter agentRouter,
             ChatMemory chatMemory) {
+        this(intentQueryService, orchestrationDecisionService, subAgentCallService, agentRouter, chatMemory, null);
+    }
+
+    @Autowired
+    public UniversalAssistantOrchestratorService(
+            UniversalIntentQueryService intentQueryService,
+            UniversalOrchestrationDecisionService orchestrationDecisionService,
+            UniversalSubAgentCallService subAgentCallService,
+            AgentRouter agentRouter,
+            ChatMemory chatMemory,
+            TurnCancellationGuard turnCancellationGuard) {
         this.intentQueryService = intentQueryService;
         this.orchestrationDecisionService = orchestrationDecisionService;
         this.subAgentCallService = subAgentCallService;
         this.agentRouter = agentRouter;
         this.chatMemory = chatMemory;
+        this.turnCancellationGuard = turnCancellationGuard;
     }
 
     /**
@@ -89,9 +103,7 @@ public class UniversalAssistantOrchestratorService {
                 request.turnId(), request.contextId(), request.userId(), request.parentConversationId())) {
             return OrchestrationOutcome.CONTINUE;
         }
-        if (ChatTurnCancellationRegistry.isCancelled(request.turnId())) {
-            throw new TurnCancelledException(request.turnId());
-        }
+        throwIfCancelled(request.turnId());
 
         List<Message> messages = buildTurnMessages(request);
         List<OrchestrationTraceEntry> trace = new ArrayList<>();
@@ -102,7 +114,6 @@ public class UniversalAssistantOrchestratorService {
 
         String routingQuery = intentQueryService.buildRoutingQuery(
                 chatMemory, request.parentConversationId(), messages, formatTrace(trace));
-        // 手动指定子智能体时跳过意图召回与编排决策，直接调用
         if (manualOrchestrateAgentId != null) {
             ensureCallableManualOrchestrateAgent(manualOrchestrateAgentId, callableSubAgents);
             if (StringUtils.isBlank(routingQuery)) {
@@ -148,9 +159,7 @@ public class UniversalAssistantOrchestratorService {
         boolean orchestratingEmitted = false;
         int round = 0;
         while (round < MAX_ORCHESTRATION_ROUNDS) {
-            if (ChatTurnCancellationRegistry.isCancelled(request.turnId())) {
-                throw new TurnCancelledException(request.turnId());
-            }
+            throwIfCancelled(request.turnId());
             if (!orchestratingEmitted && emitter != null) {
                 emitter.onAgentOrchestratingStart();
                 orchestratingEmitted = true;
@@ -170,9 +179,7 @@ public class UniversalAssistantOrchestratorService {
             if (StringUtils.isBlank(routingQuery)) {
                 break;
             }
-            if (ChatTurnCancellationRegistry.isCancelled(request.turnId())) {
-                throw new TurnCancelledException(request.turnId());
-            }
+            throwIfCancelled(request.turnId());
 
             String callId = UUID.randomUUID().toString();
             String argumentsJson = "{\"agentId\":\"" + trimmedAgentId + "\",\"query\":"
@@ -212,13 +219,22 @@ public class UniversalAssistantOrchestratorService {
                 : OrchestrationOutcome.ORCHESTRATED;
     }
 
-    /** 校验手动直连目标必须是可调用的子智能体。 */
     private void ensureCallableManualOrchestrateAgent(String agentId, List<AiAgent> callableSubAgents) {
         boolean callable = callableSubAgents.stream()
                 .map(AiAgent::getAgentId)
                 .anyMatch(agentId::equals);
         if (!callable) {
             throw new IllegalArgumentException("Unsupported agentId: " + agentId);
+        }
+    }
+
+    private void throwIfCancelled(String turnId) {
+        if (turnCancellationGuard != null) {
+            turnCancellationGuard.throwIfCancelled(turnId);
+            return;
+        }
+        if (io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry.isCancelled(turnId)) {
+            throw new TurnCancelledException(turnId);
         }
     }
 
