@@ -71,7 +71,7 @@ spring:
       port: 36379
 mybatis:
   configLocation: classpath:mapper/mybatis-config.xml
-  mapperLocations: classpath*:mapper/ai/base/**/*.xml
+  mapperLocations: classpath*:mapper/ai/base/**/*.xml,classpath*:mapper/ai/ext/**/*.xml
   file-path:
     export-file: /var/backup/ftp/virtual/exportfiles/logs
 j2agent:

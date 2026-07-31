@@ -1,5 +1,6 @@
 package io.github.jerryt92.j2agent.service.audit;
 
+import io.github.jerryt92.j2agent.mapper.ext.AuditChatContextExtMapper;
 import io.github.jerryt92.j2agent.mapper.ext.LlmUsageRecordMapper;
 import io.github.jerryt92.j2agent.mapper.mgb.ChatContextItemMapper;
 import io.github.jerryt92.j2agent.mapper.mgb.ChatContextRecordMapper;
@@ -18,7 +19,6 @@ import io.github.jerryt92.j2agent.model.po.LlmUsageSummaryRow;
 import io.github.jerryt92.j2agent.model.po.mgb.ChatContextItem;
 import io.github.jerryt92.j2agent.model.po.mgb.ChatContextItemExample;
 import io.github.jerryt92.j2agent.model.po.mgb.ChatContextRecord;
-import io.github.jerryt92.j2agent.model.po.mgb.ChatContextRecordExample;
 import io.github.jerryt92.j2agent.model.po.mgb.ChatContextRecordKey;
 import io.github.jerryt92.j2agent.model.po.mgb.UserPo;
 import io.github.jerryt92.j2agent.model.po.mgb.UserPoExample;
@@ -45,6 +45,7 @@ public class AuditService {
     private final LlmUsageRecordMapper llmUsageRecordMapper;
     private final ChatContextRecordMapper chatContextRecordMapper;
     private final ChatContextItemMapper chatContextItemMapper;
+    private final AuditChatContextExtMapper auditChatContextExtMapper;
     private final UserPoMapper userPoMapper;
 
     @Autowired(required = false)
@@ -53,10 +54,12 @@ public class AuditService {
     public AuditService(LlmUsageRecordMapper llmUsageRecordMapper,
                         ChatContextRecordMapper chatContextRecordMapper,
                         ChatContextItemMapper chatContextItemMapper,
+                        AuditChatContextExtMapper auditChatContextExtMapper,
                         UserPoMapper userPoMapper) {
         this.llmUsageRecordMapper = llmUsageRecordMapper;
         this.chatContextRecordMapper = chatContextRecordMapper;
         this.chatContextItemMapper = chatContextItemMapper;
+        this.auditChatContextExtMapper = auditChatContextExtMapper;
         this.userPoMapper = userPoMapper;
     }
 
@@ -121,7 +124,7 @@ public class AuditService {
         return dto;
     }
 
-    /** 查询聊天会话列表；userId 可选，不传则查全部。按 context_id 倒序（UUIDv7 新的在前）。 */
+    /** 查询聊天会话列表；userId 可选。按 update_time 倒序（context_id 编码后无法按字符串还原 UUIDv7 时间序）。 */
     public AuditContextListDto getContexts(String userId,
                                            String title,
                                            String agentId,
@@ -131,14 +134,13 @@ public class AuditService {
                                            Integer limit) {
         int off = normalizeOffset(offset);
         int lim = normalizeLimit(limit);
+        String uid = blankToNull(userId);
+        String titleKw = blankToNull(title);
+        String aid = blankToNull(agentId);
 
-        ChatContextRecordExample example = buildContextExample(blankToNull(userId), title, agentId, from, to);
-        long total = chatContextRecordMapper.countByExample(example);
-
-        example.setOrderByClause("context_id desc");
-        example.setOffset(off);
-        example.setLimit(lim);
-        List<ChatContextRecord> records = chatContextRecordMapper.selectByExample(example);
+        long total = auditChatContextExtMapper.countContexts(uid, titleKw, aid, from, to);
+        List<ChatContextRecord> records =
+                auditChatContextExtMapper.selectContexts(uid, titleKw, aid, from, to, off, lim);
 
         Map<String, String> usernameById = loadUsernames(records.stream()
                 .map(ChatContextRecord::getUserId)
@@ -146,8 +148,8 @@ public class AuditService {
 
         List<AuditContextItemDto> items = new ArrayList<>(records.size());
         for (ChatContextRecord record : records) {
-            String uid = blankToNull(record.getUserId());
-            items.add(toContextItem(record, uid == null ? null : usernameById.get(uid)));
+            String ownerId = blankToNull(record.getUserId());
+            items.add(toContextItem(record, ownerId == null ? null : usernameById.get(ownerId)));
         }
         AuditContextListDto dto = new AuditContextListDto();
         dto.setTotal(total);
@@ -238,31 +240,6 @@ public class AuditService {
             map.put(user.getId().trim(), user.getUsername());
         }
         return map;
-    }
-
-    private ChatContextRecordExample buildContextExample(String userId,
-                                                         String title,
-                                                         String agentId,
-                                                         Long from,
-                                                         Long to) {
-        ChatContextRecordExample example = new ChatContextRecordExample();
-        var criteria = example.createCriteria();
-        if (StringUtils.hasText(userId)) {
-            criteria.andUserIdEqualTo(userId);
-        }
-        if (StringUtils.hasText(title)) {
-            criteria.andTitleLike("%" + title.trim() + "%");
-        }
-        if (StringUtils.hasText(agentId)) {
-            criteria.andAgentIdEqualTo(agentId.trim());
-        }
-        if (from != null) {
-            criteria.andUpdateTimeGreaterThanOrEqualTo(from);
-        }
-        if (to != null) {
-            criteria.andUpdateTimeLessThanOrEqualTo(to);
-        }
-        return example;
     }
 
     private AuditTokenSummaryItemDto toSummaryItem(LlmUsageSummaryRow row) {
