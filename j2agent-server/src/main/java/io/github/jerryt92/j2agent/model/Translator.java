@@ -330,6 +330,7 @@ public final class Translator {
         HistoryContextItem historyContextItem = new HistoryContextItem();
         historyContextItem.setContextId(chatContextRecord.getContextId());
         historyContextItem.setAgentId(chatContextRecord.getAgentId());
+        // 用户态历史列表不回传 userId，避免与审计接口混淆；跨用户查询走 AuditContextItemDto
         historyContextItem.setTitle(chatContextRecord.getTitle());
         historyContextItem.setLastUpdateTime(chatContextRecord.getUpdateTime());
         return historyContextItem;

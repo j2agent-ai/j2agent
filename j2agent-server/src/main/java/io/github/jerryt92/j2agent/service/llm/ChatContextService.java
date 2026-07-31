@@ -73,14 +73,16 @@ public class ChatContextService {
 
     /**
      * 判断用户是否可使用该 contextId：无记录视为新会话；有记录则须存在 user_id 匹配的行。
+     * 无 userId 时：仅允许尚不存在的新 contextId，已有记录一律拒绝（防匿名越权读）。
      */
     public boolean userOwnsContext(String contextId, String userId) {
-        if (userId == null) {
-            return true;
-        }
         ChatContextRecordExample anyExample = new ChatContextRecordExample();
         anyExample.createCriteria().andContextIdEqualTo(contextId);
-        if (chatContextRecordMapper.countByExample(anyExample) == 0) {
+        boolean exists = chatContextRecordMapper.countByExample(anyExample) > 0;
+        if (!StringUtils.hasText(userId)) {
+            return !exists;
+        }
+        if (!exists) {
             return true;
         }
         ChatContextRecordExample ownedExample = new ChatContextRecordExample();
@@ -99,8 +101,12 @@ public class ChatContextService {
 
     /**
      * 按 contextId + agentId 取一条会话记录并加载 Spring AI 记忆中的消息列表。
+     * <p>userId 必填：必须与记录归属一致，否则返回 null（防越权）。
      */
     public ChatContextBo getChatContext(String contextId, String userId, String agentId) {
+        if (!StringUtils.hasText(userId)) {
+            return null;
+        }
         String aid = requireAgentId(agentId);
         ChatContextRecordKey chatContextRecordKey = new ChatContextRecordKey();
         chatContextRecordKey.setContextId(contextId);
@@ -109,7 +115,7 @@ public class ChatContextService {
         if (chatContextRecord == null) {
             return null;
         }
-        if (userId != null && !userId.equals(chatContextRecord.getUserId())) {
+        if (!userId.equals(chatContextRecord.getUserId())) {
             return null;
         }
         String recordUserId = chatContextRecord.getUserId();

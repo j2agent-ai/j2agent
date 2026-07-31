@@ -73,6 +73,7 @@ CREATE TABLE llm_usage_record
 );
 
 CREATE INDEX idx_llm_usage_turn ON llm_usage_record (user_id, context_id, agent_id, turn_id, call_seq);
+CREATE INDEX idx_llm_usage_user_time ON llm_usage_record (user_id, create_time);
 
 DROP TABLE IF EXISTS app_user;
 CREATE TABLE app_user

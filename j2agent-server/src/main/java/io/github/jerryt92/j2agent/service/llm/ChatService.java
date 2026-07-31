@@ -121,7 +121,7 @@ public class ChatService {
         String resolvedContextId = request.getContextId();
         if (resolvedContextId == null) {
             resolvedContextId = UUIDv7Utils.randomUUIDv7();
-        } else if (userId != null && !chatContextService.userOwnsContext(resolvedContextId, userId)) {
+        } else if (!chatContextService.userOwnsContext(resolvedContextId, userId)) {
             throw new IllegalArgumentException("Current user does not own the contextId.");
         }
         final String contextId = resolvedContextId;

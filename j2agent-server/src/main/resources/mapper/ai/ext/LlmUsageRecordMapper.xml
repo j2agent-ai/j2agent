@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ext.LlmUsageRecordMapper">
+
+  <sql id="Summary_Where">
+    <where>
+      r.usage_status = 'AVAILABLE'
+      <if test="userId != null and userId != ''">
+        and r.user_id = #{userId}
+      </if>
+      <if test="username != null and username != ''">
+        and u.username like concat('%', #{username}, '%')
+      </if>
+      <if test="fromTime != null">
+        and r.create_time &gt;= #{fromTime}
+      </if>
+      <if test="toTime != null">
+        and r.create_time &lt;= #{toTime}
+      </if>
+    </where>
+  </sql>
+
+  <sql id="Record_Where">
+    <where>
+      <if test="userId != null and userId != ''">
+        and r.user_id = #{userId}
+      </if>
+      <if test="agentId != null and agentId != ''">
+        and r.agent_id = #{agentId}
+      </if>
+      <if test="modelName != null and modelName != ''">
+        and r.model_name like concat('%', #{modelName}, '%')
+      </if>
+      <if test="callKind != null and callKind != ''">
+        and r.call_kind = #{callKind}
+      </if>
+      <if test="usageStatus != null and usageStatus != ''">
+        and r.usage_status = #{usageStatus}
+      </if>
+      <if test="fromTime != null">
+        and r.create_time &gt;= #{fromTime}
+      </if>
+      <if test="toTime != null">
+        and r.create_time &lt;= #{toTime}
+      </if>
+    </where>
+  </sql>
+
+  <insert id="insert">
+    insert into llm_usage_record
+    (id, user_id, context_id, agent_id, turn_id, call_seq, call_kind, provider_config_id,
+     provider_type, model_name,
+     input_tokens, output_tokens, total_tokens,
+     billable_token_count, cached_input_tokens, cache_read_input_tokens, cache_creation_input_tokens,
+     reasoning_output_tokens, audio_input_tokens, audio_output_tokens, usage_status, native_usage_json,
+     error_message, create_time)
+    values
+    (#{id}, #{userId}, #{contextId}, #{agentId}, #{turnId}, #{callSeq}, #{callKind}, #{providerConfigId},
+     #{providerType}, #{modelName}, #{inputTokens},
+     #{outputTokens}, #{totalTokens}, #{billableTokenCount}, #{cachedInputTokens}, #{cacheReadInputTokens},
+     #{cacheCreationInputTokens}, #{reasoningOutputTokens}, #{audioInputTokens}, #{audioOutputTokens},
+     #{usageStatus}, #{nativeUsageJson}, #{errorMessage}, #{createTime})
+  </insert>
+
+  <select id="countSummaryByUser" resultType="long">
+    select count(1) from (
+      select r.user_id
+      from llm_usage_record r
+      left join app_user u on u.id = r.user_id
+      <include refid="Summary_Where"/>
+      group by r.user_id
+    ) t
+  </select>
+
+  <select id="selectSummaryByUser" resultType="io.github.jerryt92.j2agent.model.po.LlmUsageSummaryRow">
+    select r.user_id as userId,
+           max(u.username) as username,
+           count(1) as callCount,
+           coalesce(sum(r.input_tokens), 0) as inputTokens,
+           coalesce(sum(r.output_tokens), 0) as outputTokens,
+           coalesce(sum(r.billable_token_count), 0) as billableTokens
+    from llm_usage_record r
+    left join app_user u on u.id = r.user_id
+    <include refid="Summary_Where"/>
+    group by r.user_id
+    order by billableTokens desc, callCount desc
+    limit #{limit} offset #{offset}
+  </select>
+
+  <select id="selectGlobalTotals" resultType="io.github.jerryt92.j2agent.model.po.LlmUsageSummaryRow">
+    select cast(null as varchar) as userId,
+           cast(null as varchar) as username,
+           count(1) as callCount,
+           coalesce(sum(r.input_tokens), 0) as inputTokens,
+           coalesce(sum(r.output_tokens), 0) as outputTokens,
+           coalesce(sum(r.billable_token_count), 0) as billableTokens
+    from llm_usage_record r
+    left join app_user u on u.id = r.user_id
+    <include refid="Summary_Where"/>
+  </select>
+
+  <select id="countRecords" resultType="long">
+    select count(1)
+    from llm_usage_record r
+    left join app_user u on u.id = r.user_id
+    <include refid="Record_Where"/>
+  </select>
+
+  <select id="selectRecords" resultType="io.github.jerryt92.j2agent.model.po.LlmUsageRecordQueryRow">
+    select r.id as id,
+           r.user_id as userId,
+           u.username as username,
+           r.context_id as contextId,
+           r.agent_id as agentId,
+           r.turn_id as turnId,
+           r.call_seq as callSeq,
+           r.call_kind as callKind,
+           r.provider_type as providerType,
+           r.model_name as modelName,
+           r.input_tokens as inputTokens,
+           r.output_tokens as outputTokens,
+           r.total_tokens as totalTokens,
+           r.billable_token_count as billableTokenCount,
+           r.usage_status as usageStatus,
+           r.create_time as createTime
+    from llm_usage_record r
+    left join app_user u on u.id = r.user_id
+    <include refid="Record_Where"/>
+    order by r.create_time desc, r.call_seq desc
+    limit #{limit} offset #{offset}
+  </select>
+
+</mapper>

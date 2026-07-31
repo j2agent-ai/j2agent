@@ -71,7 +71,7 @@ spring:
       port: ${J2AGENT_REDIS_PORT}
 mybatis:
   configLocation: classpath:mapper/mybatis-config.xml
-  mapperLocations: classpath*:mapper/ai/base/**/*.xml
+  mapperLocations: classpath*:mapper/ai/base/**/*.xml,classpath*:mapper/ai/ext/**/*.xml
   file-path:
     export-file: /var/backup/ftp/virtual/exportfiles/logs
 j2agent:
