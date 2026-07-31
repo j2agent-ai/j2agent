@@ -16,6 +16,8 @@ class UniversalAssistantAgentSystemPromptTest {
         assertTrue(prompt.contains("AI 通用助手"));
         assertTrue(prompt.contains("编排服务"));
         assertTrue(prompt.contains("子智能体"));
+        assertTrue(prompt.contains("必须调用 ask_question 工具"));
+        assertTrue(prompt.contains("禁止用普通文本反问"));
         assertFalse(prompt.isBlank());
     }
 }

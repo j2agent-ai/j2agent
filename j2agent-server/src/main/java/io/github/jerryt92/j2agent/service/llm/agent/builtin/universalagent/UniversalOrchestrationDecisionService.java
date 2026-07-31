@@ -20,7 +20,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 编排决策 LLM：在候选与已执行 Trace 基础上输出 invoke 或 complete。
+ * 编排决策 LLM：在候选与已执行 Trace 基础上判断调用子智能体或交由通用助手处理。
  */
 @Slf4j
 @Service
@@ -31,10 +31,12 @@ public class UniversalOrchestrationDecisionService {
             {"action":"invoke"|"complete","agentId":"...","reason":"..."}
             规则：
             1. action=invoke 时 agentId 必填；子智能体将直接接收完整父会话上下文，无需提炼 query
-            2. action=complete 时表示无需再调用子智能体；agentId 可省略
+            2. action=complete 时表示不调用子智能体，由通用助手继续处理；agentId 可省略
             3. 已调用过的 agentId 不得再次 invoke（见已执行列表）
             4. 候选均不适用或问题已由子智能体充分回答时选 complete
-            5. 使用与用户相同的语言撰写 reason""";
+            5. 只有用户意图和必要信息足以明确匹配某个候选时才选 invoke；不得猜测用户目标、对象、范围或其他关键条件
+            6. 用户意图有歧义、多个候选均可能适用且无法可靠选择，或缺少调用所需的关键信息时，选 complete，让通用助手调用 ask_question 工具向用户澄清
+            7. 使用与用户相同的语言撰写 reason""";
 
     private final LlmSyncService llmSyncService;
     private final TurnCancellationGuard turnCancellationGuard;
