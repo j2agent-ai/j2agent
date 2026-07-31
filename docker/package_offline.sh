@@ -82,10 +82,14 @@ case $ARCH_CHOICE in
     2)
         PLATFORM="linux/arm64"
         ARCH_NAME="arm64"
+        EXPECTED_OS="linux"
+        EXPECTED_ARCH="arm64"
         ;;
     *)
         PLATFORM="linux/amd64"
         ARCH_NAME="amd64"
+        EXPECTED_OS="linux"
+        EXPECTED_ARCH="amd64"
         ;;
 esac
 
@@ -295,6 +299,52 @@ image_display_label() {
     echo "$img"
 }
 
+image_platform() {
+    local img="$1"
+    docker image inspect --format '{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}' "$img" 2>/dev/null
+}
+
+image_matches_platform() {
+    local img="$1"
+    local os
+    local arch
+    os="$(docker image inspect --format '{{.Os}}' "$img" 2>/dev/null)"
+    arch="$(docker image inspect --format '{{.Architecture}}' "$img" 2>/dev/null)"
+
+    [ "$os" = "$EXPECTED_OS" ] && [ "$arch" = "$EXPECTED_ARCH" ]
+}
+
+pull_image_for_platform() {
+    local img="$1"
+    local img_label
+    img_label="$(image_display_label "$img")"
+
+    echo -e "⏳ [正在拉取] $img_label (架构: $PLATFORM) ..."
+    if ! docker pull --platform "$PLATFORM" "$img"; then
+        echo -e "${RED}❌ 拉取失败: $img_label，将跳过打包该镜像。${NC}"
+        return 1
+    fi
+
+    if image_matches_platform "$img"; then
+        echo -e "${GREEN}✅ 架构校验通过: $img_label ($(image_platform "$img"))${NC}"
+        return 0
+    fi
+
+    echo -e "${RED}❌ 架构校验失败: $img_label，本地实际为 $(image_platform "$img")，期望 $PLATFORM，将跳过打包该镜像。${NC}"
+    return 1
+}
+
+save_image_for_platform() {
+    local img="$1"
+    local output_file="$2"
+
+    if docker save --help 2>&1 | grep -q -- '--platform'; then
+        docker save --platform "$PLATFORM" -o "$output_file" "$img"
+    else
+        docker save -o "$output_file" "$img"
+    fi
+}
+
 echo "----------------------------------------"
 echo -e "${CYAN}📦 准备打包清单:${NC}"
 for img in $TARGET_IMAGES; do
@@ -323,30 +373,37 @@ FINAL_TARGET_IMAGES="" # 用于存放最终确实存在的镜像，防止 save �
 for img in $TARGET_IMAGES; do
     img_label="$(image_display_label "$img")"
     if [ "$DO_PULL" = true ]; then
-        echo -e "⏳ [正在拉取] $img_label ..."
-        docker pull --platform "$PLATFORM" "$img"
-        if [ $? -eq 0 ]; then
+        if pull_image_for_platform "$img"; then
             FINAL_TARGET_IMAGES="$FINAL_TARGET_IMAGES $img"
-        else
-            echo -e "${RED}❌ 拉取失败: $img_label，将跳过打包该镜像。${NC}"
         fi
     else
-        # 检查本地是否存在该镜像
+        # 检查本地是否存在该镜像，且架构必须与目标平台一致
         if docker image inspect "$img" > /dev/null 2>&1; then
-            echo -e "${GREEN}✅ 本地已存在: $img_label${NC}"
-            FINAL_TARGET_IMAGES="$FINAL_TARGET_IMAGES $img"
+            if image_matches_platform "$img"; then
+                echo -e "${GREEN}✅ 本地已存在且架构匹配: $img_label ($(image_platform "$img"))${NC}"
+                FINAL_TARGET_IMAGES="$FINAL_TARGET_IMAGES $img"
+                continue
+            fi
+
+            echo -e "${YELLOW}⚠️ 本地镜像架构不匹配: $img_label，实际为 $(image_platform "$img")，期望 $PLATFORM${NC}"
+            read -p "   👉 是否按目标架构重新拉取该镜像？ (y/n) [默认 y]: " PULL_WRONG_ARCH
+            PULL_WRONG_ARCH=${PULL_WRONG_ARCH:-y}
+
+            if [[ "$PULL_WRONG_ARCH" == "y" || "$PULL_WRONG_ARCH" == "Y" ]]; then
+                if pull_image_for_platform "$img"; then
+                    FINAL_TARGET_IMAGES="$FINAL_TARGET_IMAGES $img"
+                fi
+            else
+                echo -e "⏩ 已跳过: $img_label"
+            fi
         else
             echo -e "${YELLOW}⚠️ 本地未找到镜像: $img_label${NC}"
             read -p "   👉 是否现在拉取该镜像？ (y/n) [默认 y]: " PULL_MISSING
             PULL_MISSING=${PULL_MISSING:-y}
 
             if [[ "$PULL_MISSING" == "y" || "$PULL_MISSING" == "Y" ]]; then
-                echo -e "⏳ [正在拉取] $img_label ..."
-                docker pull --platform "$PLATFORM" "$img"
-                if [ $? -eq 0 ]; then
+                if pull_image_for_platform "$img"; then
                     FINAL_TARGET_IMAGES="$FINAL_TARGET_IMAGES $img"
-                else
-                    echo -e "${RED}❌ 拉取失败: $img_label，将跳过打包该镜像。${NC}"
                 fi
             else
                 echo -e "⏩ 已跳过: $img_label"
@@ -369,10 +426,15 @@ mkdir -p "$OUTPUT_DIR"
 echo -e "📦 [正在分别打包] 将把以下镜像分别导出到目录 ${YELLOW}${OUTPUT_DIR}${NC} 中 ..."
 
     for img in $FINAL_TARGET_IMAGES; do
+        if ! image_matches_platform "$img"; then
+            echo -e "${RED}   ❌ 打包前架构校验失败: $img，实际为 $(image_platform "$img")，期望 $PLATFORM，已跳过${NC}"
+            continue
+        fi
+
         # 替换镜像名中的 / 和 : 为 _，确保它是合法的文件名
         SAFE_FILENAME=$(echo "$img" | tr '/:' '_').tar
         echo -e "   ⏳ 正在打包 ${GREEN}$(image_display_label "$img")${NC} -> ${OUTPUT_DIR}/${SAFE_FILENAME}"
-        docker save -o "${OUTPUT_DIR}/${SAFE_FILENAME}" "$img"
+        save_image_for_platform "$img" "${OUTPUT_DIR}/${SAFE_FILENAME}"
         if [ $? -ne 0 ]; then
             echo -e "${RED}   ❌ 打包失败: $img${NC}"
         fi
