@@ -1,5 +1,6 @@
 package io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent;
 
+import com.alibaba.fastjson2.JSONObject;
 import io.github.jerryt92.j2agent.model.ChatAttachmentDto;
 import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.service.llm.agent.builtin.OrchestrationTraceEntry;
@@ -124,8 +125,7 @@ public class UniversalAssistantOrchestratorService {
                 emitter.onAgentOrchestratingStart();
             }
             String callId = UUID.randomUUID().toString();
-            String argumentsJson = "{\"agentId\":\"" + manualOrchestrateAgentId + "\",\"query\":"
-                    + jsonString(routingQuery) + "}";
+            String argumentsJson = buildSubAgentCallArgumentsJson(manualOrchestrateAgentId, routingQuery);
             long startedAt = System.currentTimeMillis();
             if (emitter != null) {
                 emitter.onToolStart(callId, SubAgentCallNames.TOOL_NAME, argumentsJson);
@@ -182,8 +182,7 @@ public class UniversalAssistantOrchestratorService {
             throwIfCancelled(request.turnId());
 
             String callId = UUID.randomUUID().toString();
-            String argumentsJson = "{\"agentId\":\"" + trimmedAgentId + "\",\"query\":"
-                    + jsonString(routingQuery) + "}";
+            String argumentsJson = buildSubAgentCallArgumentsJson(trimmedAgentId, routingQuery);
             long startedAt = System.currentTimeMillis();
             if (emitter != null) {
                 emitter.onToolStart(callId, SubAgentCallNames.TOOL_NAME, argumentsJson);
@@ -263,10 +262,13 @@ public class UniversalAssistantOrchestratorService {
         return sb.toString().trim();
     }
 
-    private static String jsonString(String text) {
-        if (text == null) {
-            return "\"\"";
-        }
-        return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\"";
+    /**
+     * 构造 call_sub_agent 的 TOOL arguments JSON；必须正规序列化，避免 query 特殊字符导致前端 JSON.parse 失败。
+     */
+    public static String buildSubAgentCallArgumentsJson(String agentId, String query) {
+        JSONObject obj = new JSONObject();
+        obj.put("agentId", agentId == null ? "" : agentId);
+        obj.put("query", query == null ? "" : query);
+        return obj.toJSONString();
     }
 }

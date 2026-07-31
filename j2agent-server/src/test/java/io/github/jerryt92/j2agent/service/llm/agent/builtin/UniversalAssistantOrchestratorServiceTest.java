@@ -140,6 +140,31 @@ class UniversalAssistantOrchestratorServiceTest {
     }
 
     @Test
+    void buildSubAgentCallArgumentsJson_escapesSpecialCharsForStrictJsonParse() throws Exception {
+        String query = "line1\nline2 \"quoted\"\r\npath\\dir\tend";
+        String json = UniversalAssistantOrchestratorService.buildSubAgentCallArgumentsJson(
+                "ui_navigation_agent", query);
+
+        com.alibaba.fastjson2.JSONObject parsed = com.alibaba.fastjson2.JSON.parseObject(json);
+        assertEquals("ui_navigation_agent", parsed.getString("agentId"));
+        assertEquals(query, parsed.getString("query"));
+
+        // 与浏览器 JSON.parse 契约一致：标准库亦可解析
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var tree = mapper.readTree(json);
+        assertEquals("ui_navigation_agent", tree.get("agentId").asText());
+        assertEquals(query, tree.get("query").asText());
+    }
+
+    @Test
+    void buildSubAgentCallArgumentsJson_nullQueryBecomesEmptyString() {
+        String json = UniversalAssistantOrchestratorService.buildSubAgentCallArgumentsJson("wiki", null);
+        com.alibaba.fastjson2.JSONObject parsed = com.alibaba.fastjson2.JSON.parseObject(json);
+        assertEquals("wiki", parsed.getString("agentId"));
+        assertEquals("", parsed.getString("query"));
+    }
+
+    @Test
     void manualOrchestrateRejectsUnknownAgent() {
         UniversalIntentQueryService intentQueryService = Mockito.mock(UniversalIntentQueryService.class);
         UniversalOrchestrationDecisionService orchestrationDecisionService =
