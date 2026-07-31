@@ -20,6 +20,7 @@ tags:
   - name: User
   - name: Register
   - name: ResetPassword
+  - name: Audit
   - name: FileManagement
 paths:
   # HealthCheck API
@@ -1394,6 +1395,144 @@ paths:
             application/json:
               schema:
                 $ref: './openapi-model.yaml#/components/schemas/ObjectBatchResultDto'
+
+  # Audit API（管理员）
+  /v1/rest/j2agent/audit/token/summary:
+    get:
+      tags: [ Audit ]
+      operationId: getAuditTokenSummary
+      summary: Token 用量按用户聚合总览
+      parameters:
+        - name: user-id
+          in: query
+          schema: { type: string }
+        - name: username
+          in: query
+          description: 用户名模糊匹配
+          schema: { type: string }
+        - name: from
+          in: query
+          description: 起始时间（毫秒时间戳）
+          schema: { type: integer, format: int64 }
+        - name: to
+          in: query
+          description: 结束时间（毫秒时间戳）
+          schema: { type: integer, format: int64 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: './openapi-model.yaml#/components/schemas/AuditTokenSummaryDto'
+
+  /v1/rest/j2agent/audit/token/records:
+    get:
+      tags: [ Audit ]
+      operationId: getAuditTokenRecords
+      summary: Token 用量调用明细
+      parameters:
+        - name: user-id
+          in: query
+          schema: { type: string }
+        - name: agent-id
+          in: query
+          schema: { type: string }
+        - name: model-name
+          in: query
+          description: 模型名模糊匹配
+          schema: { type: string }
+        - name: call-kind
+          in: query
+          schema: { type: string }
+        - name: usage-status
+          in: query
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: to
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: './openapi-model.yaml#/components/schemas/AuditTokenRecordListDto'
+
+  /v1/rest/j2agent/audit/contexts:
+    get:
+      tags: [ Audit ]
+      operationId: getAuditContexts
+      summary: 查询聊天会话列表（user-id 可选；按 context_id 倒序）
+      parameters:
+        - name: user-id
+          in: query
+          required: false
+          description: 可选，指定用户；不传则查全部
+          schema: { type: string }
+        - name: title
+          in: query
+          description: 标题模糊匹配
+          schema: { type: string }
+        - name: agent-id
+          in: query
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: to
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: './openapi-model.yaml#/components/schemas/AuditContextListDto'
+
+  /v1/rest/j2agent/audit/context:
+    get:
+      tags: [ Audit ]
+      operationId: getAuditContext
+      summary: 审计专用：按会话主键直读消息（不经用户态 /context）
+      parameters:
+        - name: context-id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: agent-id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: './openapi-model.yaml#/components/schemas/AuditContextDetailDto'
 
 components:
   schemas:

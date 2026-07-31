@@ -110,7 +110,10 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
     @Override
     public ResponseEntity<ChatContextDto> getHistoryContext(String contextId, String agentId) {
         UserContextBo session = loginService.getSession();
-        ChatContextBo chatContextBo = chatContextService.getChatContext(contextId, session == null ? null : session.getUserId(), agentId);
+        if (session == null || !StringUtils.isNotBlank(session.getUserId())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "login is required");
+        }
+        ChatContextBo chatContextBo = chatContextService.getChatContext(contextId, session.getUserId(), agentId);
         boolean ragSourceDisplayEnabled = UniversalAssistantConstants.isUniversalAssistant(agentId)
                 || UniversalAssistantConstants.isKnowledgeQaAssistant(agentId) || agentRouter.route(agentId).isRagSourceDisplayEnabled();
         ChatContextDto dto = chatContextBo == null
@@ -123,6 +126,15 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
     }
 
     @Override
+    public ResponseEntity<HistoryContextList> getHistoryContextList(String agentId, Integer offset, Integer limit) {
+        UserContextBo session = loginService.getSession();
+        if (session == null || !StringUtils.isNotBlank(session.getUserId())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "login is required");
+        }
+        return ResponseEntity.ok(chatContextService.getHistoryContextList(offset, limit, agentId));
+    }
+
+    @Override
     public ResponseEntity<Void> deleteHistoryContext(List<String> contextId, Boolean clearAll, String agentId) {
         if (Boolean.TRUE.equals(clearAll)) {
             chatContextService.clearAllHistoryContext(agentId);
@@ -132,11 +144,6 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
             chatContextService.deleteHistoryContext(contextId, agentId);
         }
         return ResponseEntity.ok().build();
-    }
-
-    @Override
-    public ResponseEntity<HistoryContextList> getHistoryContextList(String agentId, Integer offset, Integer limit) {
-        return ResponseEntity.ok(chatContextService.getHistoryContextList(offset, limit, agentId));
     }
 
     @Override

@@ -1008,6 +1008,10 @@ components:
         agentId:
           type: string
           description: 智能体ID（与记忆隔离维度一致，非空）
+        userId:
+          type: string
+          description: 已废弃；用户态历史列表不再返回。跨用户场景请用 AuditContextItemDto.username/userId
+          deprecated: true
         title:
           type: string
           description: 标题
@@ -1216,3 +1220,124 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/QaTemplateItem'
+
+    # 审计：Token 用量按用户聚合行
+    AuditTokenSummaryItemDto:
+      type: object
+      properties:
+        userId: { type: string }
+        username: { type: string }
+        callCount: { type: integer, format: int64 }
+        inputTokens: { type: integer, format: int64 }
+        outputTokens: { type: integer, format: int64 }
+        billableTokens: { type: integer, format: int64 }
+
+    # 审计：Token 用量总览（含全局合计）
+    AuditTokenSummaryDto:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditTokenSummaryItemDto'
+        total:
+          type: integer
+          format: int64
+          description: 聚合用户行总数（分页用）
+        globalCallCount: { type: integer, format: int64 }
+        globalInputTokens: { type: integer, format: int64 }
+        globalOutputTokens: { type: integer, format: int64 }
+        globalBillableTokens: { type: integer, format: int64 }
+
+    # 审计：Token 调用明细行
+    AuditTokenRecordDto:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        username: { type: string }
+        contextId: { type: string }
+        agentId: { type: string }
+        turnId: { type: string }
+        callSeq: { type: integer }
+        callKind: { type: string }
+        providerType: { type: string }
+        modelName: { type: string }
+        inputTokens: { type: integer }
+        outputTokens: { type: integer }
+        totalTokens: { type: integer }
+        billableTokenCount: { type: integer }
+        usageStatus: { type: string }
+        createTime: { type: integer, format: int64 }
+
+    AuditTokenRecordListDto:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditTokenRecordDto'
+        total:
+          type: integer
+          format: int64
+
+    # 审计：聊天会话列表（带 total）
+    AuditContextListDto:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditContextItemDto'
+        total:
+          type: integer
+          format: int64
+
+    # 审计：会话列表项（独立于用户态 HistoryContextItem）
+    AuditContextItemDto:
+      type: object
+      description: 审计会话列表项
+      properties:
+        contextId:
+          type: string
+          description: 聊天上下文ID
+        agentId:
+          type: string
+          description: 智能体ID
+        userId:
+          type: string
+          description: 会话所属用户ID
+        username:
+          type: string
+          description: 用户名（join app_user）
+        title:
+          type: string
+          description: 标题
+        lastUpdateTime:
+          type: integer
+          format: int64
+          description: 最后更新时间（毫秒）
+
+    # 审计：会话消息详情（独立于用户态 ChatContextDto）
+    AuditContextDetailDto:
+      type: object
+      description: 审计会话消息详情
+      properties:
+        contextId:
+          type: string
+        agentId:
+          type: string
+        userId:
+          type: string
+        username:
+          type: string
+          description: 用户名（join app_user）
+        title:
+          type: string
+        lastUpdateTime:
+          type: integer
+          format: int64
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageDto'

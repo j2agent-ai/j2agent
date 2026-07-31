@@ -62,10 +62,18 @@ public class ChatAttachmentUrlResolver {
     }
 
     public void applyToChatContext(ChatContextDto dto) {
-        if (dto == null || dto.getMessages() == null) {
+        if (dto == null) {
             return;
         }
-        for (MessageDto message : dto.getMessages()) {
+        applyToMessages(dto.getMessages());
+    }
+
+    /** 为消息列表中的附件填充展示 URL（审计详情等复用）。 */
+    public void applyToMessages(List<MessageDto> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return;
+        }
+        for (MessageDto message : messages) {
             if (message.getAttachments() == null || message.getAttachments().isEmpty()) {
                 continue;
             }
