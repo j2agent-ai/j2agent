@@ -103,7 +103,7 @@ class KnowledgeRepoSyncServiceFullRebuildTest {
         });
         when(metadataService.getRepoRootPath()).thenReturn(tempRepo);
         when(metadataService.listConfiguredCollectionNames()).thenReturn(Set.of("knowledge_collection"));
-        when(metadataService.listConfiguredRepositoryPaths()).thenReturn(List.of(tempRepo));
+        when(metadataService.listConfiguredScanPaths()).thenReturn(List.of(tempRepo));
         when(metadataService.hasMetadata()).thenReturn(true);
         when(metadataService.resolveMetadataConfigHash(document)).thenReturn("metadata-hash");
         when(metadataService.resolveCollection(document)).thenReturn("knowledge_collection");
@@ -150,7 +150,7 @@ class KnowledgeRepoSyncServiceFullRebuildTest {
         Files.writeString(goodDocument, "# Good\na healthy document with more text");
         when(metadataService.getRepoRootPath()).thenReturn(tempRepo);
         when(metadataService.listConfiguredCollectionNames()).thenReturn(Set.of("knowledge_collection"));
-        when(metadataService.listConfiguredRepositoryPaths()).thenReturn(List.of(tempRepo));
+        when(metadataService.listConfiguredScanPaths()).thenReturn(List.of(tempRepo));
         when(metadataService.hasMetadata()).thenReturn(true);
         when(metadataService.resolveMetadataConfigHash(badDocument)).thenReturn("metadata-hash");
         when(metadataService.resolveMetadataConfigHash(goodDocument)).thenReturn("metadata-hash");

@@ -12,6 +12,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GitKnowledgeRepositorySyncerTest {
@@ -53,10 +54,111 @@ class GitKnowledgeRepositorySyncerTest {
         assertTrue(Files.exists(local.resolve("next.md")));
     }
 
+    @Test
+    void syncWithSubPathsChecksOutOnlyConfiguredPaths() throws Exception {
+        System.setProperty("user.home", tempDir.resolve("home").toString());
+        System.setProperty("XDG_CONFIG_HOME", tempDir.resolve("xdg").toString());
+        Path remote = tempDir.resolve("remote-sparse");
+        Path local = tempDir.resolve("knowledge-repo").resolve("repo-sparse");
+        Files.createDirectories(remote.resolve("docs"));
+        Files.createDirectories(remote.resolve("src"));
+        try (Git git = Git.init().setDirectory(remote.toFile()).setInitialBranch("main").call()) {
+            Files.writeString(remote.resolve("docs").resolve("guide.md"), "# Guide\n", StandardCharsets.UTF_8);
+            Files.writeString(remote.resolve("src").resolve("app.java"), "class App {}", StandardCharsets.UTF_8);
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("initial").setAuthor("Tester", "test@example.com").call();
+        }
+
+        KnowledgeRepositoryPo po = repository(remote);
+        po.setProtocolConfig("{\"subPaths\":[\"docs\"]}");
+        GitKnowledgeRepositorySyncer syncer = new GitKnowledgeRepositorySyncer();
+
+        syncer.sync(po, new KnowledgeRepositoryDtos.CredentialConfig(), local);
+
+        assertTrue(Files.exists(local.resolve("docs").resolve("guide.md")));
+        assertFalse(Files.exists(local.resolve("src")));
+    }
+
+    @Test
+    void syncWithSubPathsCleansPreviouslyCheckedOutPaths() throws Exception {
+        System.setProperty("user.home", tempDir.resolve("home").toString());
+        System.setProperty("XDG_CONFIG_HOME", tempDir.resolve("xdg").toString());
+        Path remote = tempDir.resolve("remote-sparse-change");
+        Path local = tempDir.resolve("knowledge-repo").resolve("repo-sparse-change");
+        Files.createDirectories(remote.resolve("docs"));
+        Files.createDirectories(remote.resolve("kb"));
+        try (Git git = Git.init().setDirectory(remote.toFile()).setInitialBranch("main").call()) {
+            Files.writeString(remote.resolve("docs").resolve("guide.md"), "# Guide\n", StandardCharsets.UTF_8);
+            Files.writeString(remote.resolve("kb").resolve("faq.md"), "# FAQ\n", StandardCharsets.UTF_8);
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("initial").setAuthor("Tester", "test@example.com").call();
+        }
+
+        KnowledgeRepositoryPo po = repository(remote);
+        po.setProtocolConfig("{\"subPaths\":[\"docs\"]}");
+        GitKnowledgeRepositorySyncer syncer = new GitKnowledgeRepositorySyncer();
+        syncer.sync(po, new KnowledgeRepositoryDtos.CredentialConfig(), local);
+
+        po.setProtocolConfig("{\"subPaths\":[\"kb\"]}");
+        syncer.sync(po, new KnowledgeRepositoryDtos.CredentialConfig(), local);
+
+        assertFalse(Files.exists(local.resolve("docs")));
+        assertTrue(Files.exists(local.resolve("kb").resolve("faq.md")));
+    }
+
+    @Test
+    void syncRestoresFullCheckoutWhenSubPathsAreCleared() throws Exception {
+        System.setProperty("user.home", tempDir.resolve("home").toString());
+        System.setProperty("XDG_CONFIG_HOME", tempDir.resolve("xdg").toString());
+        Path remote = tempDir.resolve("remote-sparse-clear");
+        Path local = tempDir.resolve("knowledge-repo").resolve("repo-sparse-clear");
+        Files.createDirectories(remote.resolve("docs"));
+        Files.createDirectories(remote.resolve("src"));
+        try (Git git = Git.init().setDirectory(remote.toFile()).setInitialBranch("main").call()) {
+            Files.writeString(remote.resolve("docs").resolve("guide.md"), "# Guide\n", StandardCharsets.UTF_8);
+            Files.writeString(remote.resolve("src").resolve("app.java"), "class App {}", StandardCharsets.UTF_8);
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("initial").setAuthor("Tester", "test@example.com").call();
+        }
+
+        KnowledgeRepositoryPo po = repository(remote);
+        po.setProtocolConfig("{\"subPaths\":[\"docs\"]}");
+        GitKnowledgeRepositorySyncer syncer = new GitKnowledgeRepositorySyncer();
+        syncer.sync(po, new KnowledgeRepositoryDtos.CredentialConfig(), local);
+
+        po.setProtocolConfig("{}");
+        syncer.sync(po, new KnowledgeRepositoryDtos.CredentialConfig(), local);
+
+        assertTrue(Files.exists(local.resolve("docs").resolve("guide.md")));
+        assertTrue(Files.exists(local.resolve("src").resolve("app.java")));
+    }
+
+    @Test
+    void syncWithMissingSubPathFails() throws Exception {
+        System.setProperty("user.home", tempDir.resolve("home").toString());
+        System.setProperty("XDG_CONFIG_HOME", tempDir.resolve("xdg").toString());
+        Path remote = tempDir.resolve("remote-sparse-missing");
+        Path local = tempDir.resolve("knowledge-repo").resolve("repo-sparse-missing");
+        Files.createDirectories(remote);
+        try (Git git = Git.init().setDirectory(remote.toFile()).setInitialBranch("main").call()) {
+            Files.writeString(remote.resolve("doc.md"), "# Doc\n", StandardCharsets.UTF_8);
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("initial").setAuthor("Tester", "test@example.com").call();
+        }
+
+        KnowledgeRepositoryPo po = repository(remote);
+        po.setProtocolConfig("{\"subPaths\":[\"missing\"]}");
+        GitKnowledgeRepositorySyncer syncer = new GitKnowledgeRepositorySyncer();
+
+        assertThrows(IllegalStateException.class,
+                () -> syncer.sync(po, new KnowledgeRepositoryDtos.CredentialConfig(), local));
+    }
+
     private KnowledgeRepositoryPo repository(Path remote) {
         KnowledgeRepositoryPo po = new KnowledgeRepositoryPo();
         po.setRepoCode("repo");
         po.setRemoteUrl(remote.toUri().toString());
+        po.setProtocolConfig("{}");
         return po;
     }
 }

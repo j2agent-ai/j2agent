@@ -6,6 +6,7 @@ import io.github.jerryt92.j2agent.mapper.KnowledgeRepositoryMapper;
 import io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repository.KnowledgeRepositoryAutoRegistrar;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repository.KnowledgeRepositoryConstants;
+import io.github.jerryt92.j2agent.service.rag.knowledge.repository.KnowledgeRepositorySubPathSupport;
 import io.github.jerryt92.j2agent.utils.HashUtil;
 import jakarta.annotation.PostConstruct;
 import lombok.Getter;
@@ -25,6 +26,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * 知识库目录元数据解析服务，配置来源为知识库列表中的仓库高级配置。
@@ -77,7 +79,8 @@ public class KnowledgeRepoMetadataService {
                     metadataConfig.collectionName().trim(),
                     metadataConfig.partitionNames(),
                     normalizeMinHeadingLevel(metadataConfig.minHeadingLevel()),
-                    normalizeFilenameAsTitle(metadataConfig.filenameAsTitle())
+                    normalizeFilenameAsTitle(metadataConfig.filenameAsTitle()),
+                    KnowledgeRepositorySubPathSupport.parseProtocolConfigSubPaths(po.getProtocolConfig())
             ));
         }
         metadataByRepoCode = Collections.unmodifiableMap(next);
@@ -104,6 +107,23 @@ public class KnowledgeRepoMetadataService {
         return metadataByRepoCode.keySet().stream()
                 .sorted()
                 .map(repoCode -> repoRootPath.resolve(repoCode).toAbsolutePath().normalize())
+                .toList();
+    }
+
+    public List<Path> listConfiguredScanPaths() {
+        if (repoRootPath == null || metadataByRepoCode.isEmpty()) {
+            return List.of();
+        }
+        return metadataByRepoCode.values().stream()
+                .sorted((left, right) -> left.repoCode().compareTo(right.repoCode()))
+                .flatMap(metadata -> {
+                    Path repositoryPath = repoRootPath.resolve(metadata.repoCode()).toAbsolutePath().normalize();
+                    if (metadata.subPaths().isEmpty()) {
+                        return Stream.of(repositoryPath);
+                    }
+                    return metadata.subPaths().stream()
+                            .map(subPath -> repositoryPath.resolve(subPath).toAbsolutePath().normalize());
+                })
                 .toList();
     }
 
@@ -246,7 +266,8 @@ public class KnowledgeRepoMetadataService {
             String collectionName,
             List<String> partitionNames,
             int minHeadingLevel,
-            boolean filenameAsTitle
+            boolean filenameAsTitle,
+            List<String> subPaths
     ) {
         private String metadataConfigHash() {
             return HASH_BUILDER.build(this);

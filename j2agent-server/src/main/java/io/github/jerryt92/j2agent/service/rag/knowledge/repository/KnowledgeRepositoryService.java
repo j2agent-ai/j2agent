@@ -205,9 +205,15 @@ public class KnowledgeRepositoryService {
         po.setDefaultBranch(KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)
                 ? StringUtils.trimToNull(request.getDefaultBranch())
                 : null);
-        po.setProtocolConfig(request.getProtocolConfig() == null
+        String protocolConfig = request.getProtocolConfig() == null
                 ? current == null ? "{}" : StringUtils.defaultIfBlank(current.getProtocolConfig(), "{}")
-                : JSON.toJSONString(request.getProtocolConfig()));
+                : JSON.toJSONString(request.getProtocolConfig());
+        List<String> subPaths = request.getSubPaths() == null && current != null
+                ? KnowledgeRepositorySubPathSupport.parseProtocolConfigSubPaths(current.getProtocolConfig())
+                : request.getSubPaths();
+        po.setProtocolConfig(KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)
+                ? mergeSubPaths(protocolConfig, subPaths)
+                : protocolConfig);
         po.setDisplayName(StringUtils.trimToNull(request.getDisplayName()));
         MetadataConfig currentMetadataConfig = parseMetadataConfig(current == null ? null : current.getMetadataConfig());
         String collectionName = normalizeCollectionName(StringUtils.defaultIfBlank(
@@ -315,6 +321,7 @@ public class KnowledgeRepositoryService {
         item.setLastSyncTime(po.getLastSyncTime());
         item.setLastError(po.getLastError());
         item.setProtocolConfig(parseProtocolConfig(po.getProtocolConfig()));
+        item.setSubPaths(KnowledgeRepositorySubPathSupport.parseProtocolConfigSubPaths(po.getProtocolConfig()));
         item.setHasCredential(StringUtils.isNotBlank(po.getCredentialConfigCipher()));
         MetadataConfig metadataConfig = parseMetadataConfig(po.getMetadataConfig());
         item.setCollections(StringUtils.isBlank(metadataConfig.collectionName()) ? List.of() : List.of(metadataConfig.collectionName()));
@@ -377,6 +384,14 @@ public class KnowledgeRepositoryService {
             return Map.of();
         }
         return new LinkedHashMap<>(JSON.parseObject(json));
+    }
+
+    private String mergeSubPaths(String protocolConfig, List<String> subPaths) {
+        try {
+            return KnowledgeRepositorySubPathSupport.mergeProtocolConfig(protocolConfig, subPaths);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
+        }
     }
 
     private KnowledgeRepositoryPo requireConfigured(String id) {

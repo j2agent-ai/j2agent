@@ -550,12 +550,12 @@ public class KnowledgeRepoSyncService {
             log.info("知识库目录未找到已启用仓库配置，本轮按空知识库处理: {}", rootPath.toAbsolutePath().normalize());
             return snapshot;
         }
-        for (Path repositoryPath : metadataService.listConfiguredRepositoryPaths()) {
-            if (!Files.isDirectory(repositoryPath)) {
+        for (Path scanPath : metadataService.listConfiguredScanPaths()) {
+            if (!Files.exists(scanPath)) {
                 continue;
             }
             // 跟随符号链接以识别外链的知识库目录。
-            try (Stream<Path> pathStream = Files.walk(repositoryPath, Integer.MAX_VALUE, FileVisitOption.FOLLOW_LINKS)) {
+            try (Stream<Path> pathStream = Files.walk(scanPath, Integer.MAX_VALUE, FileVisitOption.FOLLOW_LINKS)) {
                 pathStream.filter(Files::isRegularFile)
                         .filter(this::isSupportedKnowledgeDocument)
                         .forEach(path -> {
@@ -568,7 +568,7 @@ public class KnowledgeRepoSyncService {
                             snapshot.put(relativePath, new FileState(fileSha256, metadataConfigHash, collectionName, partitionNames, diffHash));
                         });
             } catch (IOException e) {
-                throw new IllegalStateException("扫描知识库仓库目录失败: " + repositoryPath, e);
+                throw new IllegalStateException("扫描知识库仓库目录失败: " + scanPath, e);
             }
         }
         return snapshot;

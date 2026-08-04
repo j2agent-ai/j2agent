@@ -5,11 +5,15 @@ import io.github.jerryt92.j2agent.model.repository.KnowledgeRepositoryDtos;
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.treewalk.TreeWalk;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -17,6 +21,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 /**
  * Git 协议知识库仓库同步器。
@@ -35,14 +42,15 @@ public class GitKnowledgeRepositorySyncer implements KnowledgeRepositorySyncer {
                                               Path localPath) {
         Path normalizedLocalPath = localPath.toAbsolutePath().normalize();
         String branch = StringUtils.trimToNull(repository.getDefaultBranch());
+        List<String> subPaths = KnowledgeRepositorySubPathSupport.parseProtocolConfigSubPaths(repository.getProtocolConfig());
         try {
             Files.createDirectories(normalizedLocalPath.getParent());
             UsernamePasswordCredentialsProvider credentials = credentialsProvider(credentialConfig);
             if (!Files.exists(normalizedLocalPath.resolve(".git"))) {
                 deleteExistingNonGitDirectory(normalizedLocalPath);
-                cloneRepository(repository, branch, normalizedLocalPath, credentials);
+                cloneRepository(repository, branch, normalizedLocalPath, credentials, subPaths);
             } else {
-                hardResetToRemote(branch, normalizedLocalPath, credentials);
+                hardResetToRemote(branch, normalizedLocalPath, credentials, subPaths);
             }
             return readHead(normalizedLocalPath);
         } catch (Exception e) {
@@ -53,7 +61,8 @@ public class GitKnowledgeRepositorySyncer implements KnowledgeRepositorySyncer {
     private void cloneRepository(KnowledgeRepositoryPo repository,
                                  String branch,
                                  Path localPath,
-                                 UsernamePasswordCredentialsProvider credentials) throws Exception {
+                                 UsernamePasswordCredentialsProvider credentials,
+                                 List<String> subPaths) throws Exception {
         var command = Git.cloneRepository()
                 .setURI(repository.getRemoteUrl())
                 .setDirectory(localPath.toFile())
@@ -61,17 +70,23 @@ public class GitKnowledgeRepositorySyncer implements KnowledgeRepositorySyncer {
         if (StringUtils.isNotBlank(branch)) {
             command.setBranch(branch);
         }
+        if (!subPaths.isEmpty()) {
+            command.setNoCheckout(true);
+        }
         if (credentials != null) {
             command.setCredentialsProvider(credentials);
         }
-        try (Git ignored = command.call()) {
-            // Clone completes with HEAD at the requested branch.
+        try (Git git = command.call()) {
+            if (!subPaths.isEmpty()) {
+                checkoutSubPaths(git, resolveActiveBranch(branch, git), subPaths);
+            }
         }
     }
 
     private void hardResetToRemote(String branch,
                                    Path localPath,
-                                   UsernamePasswordCredentialsProvider credentials) throws Exception {
+                                   UsernamePasswordCredentialsProvider credentials,
+                                   List<String> subPaths) throws Exception {
         try (Git git = Git.open(localPath.toFile())) {
             var fetch = git.fetch()
                     .setRemote("origin")
@@ -84,9 +99,13 @@ public class GitKnowledgeRepositorySyncer implements KnowledgeRepositorySyncer {
             }
             fetch.call();
 
-            String activeBranch = StringUtils.defaultIfBlank(branch, git.getRepository().getBranch());
+            String activeBranch = resolveActiveBranch(branch, git);
             if (StringUtils.isBlank(activeBranch)) {
                 throw new IllegalStateException("无法确定 Git 知识库分支");
+            }
+            if (!subPaths.isEmpty()) {
+                checkoutSubPaths(git, activeBranch, subPaths);
+                return;
             }
             String remoteBranch = "refs/remotes/origin/" + activeBranch;
             Ref localBranch = git.getRepository().findRef(activeBranch);
@@ -97,6 +116,95 @@ public class GitKnowledgeRepositorySyncer implements KnowledgeRepositorySyncer {
             checkout.call();
             git.reset().setMode(ResetCommand.ResetType.HARD).setRef("origin/" + activeBranch).call();
             git.clean().setCleanDirectories(true).setIgnore(false).setForce(true).call();
+        }
+    }
+
+    private String resolveActiveBranch(String branch, Git git) throws IOException {
+        String activeBranch = StringUtils.trimToNull(branch);
+        if (StringUtils.isNotBlank(activeBranch)) {
+            return activeBranch;
+        }
+        activeBranch = StringUtils.trimToNull(git.getRepository().getBranch());
+        if (StringUtils.isNotBlank(activeBranch) && !ObjectId.isId(activeBranch)) {
+            return activeBranch;
+        }
+        Ref head = git.getRepository().exactRef(Constants.HEAD);
+        if (head != null && head.isSymbolic()) {
+            return git.getRepository().shortenRemoteBranchName(head.getTarget().getName());
+        }
+        return activeBranch;
+    }
+
+    private void checkoutSubPaths(Git git, String activeBranch, List<String> subPaths) throws Exception {
+        String remoteBranch = "refs/remotes/origin/" + activeBranch;
+        ObjectId remoteHead = git.getRepository().resolve(remoteBranch);
+        if (remoteHead == null) {
+            throw new IllegalStateException("无法找到远端分支: origin/" + activeBranch);
+        }
+        alignLocalBranch(git, activeBranch, remoteHead);
+        clearWorkingTree(git.getRepository().getWorkTree().toPath());
+        List<String> checkoutPaths = resolveCheckoutPaths(git, remoteHead, subPaths);
+        git.checkout()
+                .setStartPoint(remoteHead.name())
+                .addPaths(checkoutPaths)
+                .call();
+    }
+
+    private void alignLocalBranch(Git git, String activeBranch, ObjectId remoteHead) throws IOException {
+        String localBranchRef = Constants.R_HEADS + activeBranch;
+        RefUpdate branchUpdate = git.getRepository().updateRef(localBranchRef);
+        branchUpdate.setNewObjectId(remoteHead);
+        branchUpdate.setForceUpdate(true);
+        RefUpdate.Result branchResult = branchUpdate.forceUpdate();
+        if (!Set.of(RefUpdate.Result.NEW, RefUpdate.Result.FORCED, RefUpdate.Result.NO_CHANGE,
+                RefUpdate.Result.FAST_FORWARD).contains(branchResult)) {
+            throw new IllegalStateException("更新本地 Git 分支失败: " + branchResult.name());
+        }
+        RefUpdate headUpdate = git.getRepository().updateRef(Constants.HEAD);
+        RefUpdate.Result headResult = headUpdate.link(localBranchRef);
+        if (!Set.of(RefUpdate.Result.NEW, RefUpdate.Result.FORCED, RefUpdate.Result.NO_CHANGE).contains(headResult)) {
+            throw new IllegalStateException("更新 Git HEAD 失败: " + headResult.name());
+        }
+    }
+
+    private List<String> resolveCheckoutPaths(Git git, ObjectId commitId, List<String> subPaths) throws Exception {
+        Set<String> matched = new LinkedHashSet<>();
+        Set<String> missing = new LinkedHashSet<>(subPaths);
+        try (RevWalk revWalk = new RevWalk(git.getRepository());
+             TreeWalk treeWalk = new TreeWalk(git.getRepository(), revWalk.getObjectReader())) {
+            RevCommit commit = revWalk.parseCommit(commitId);
+            treeWalk.addTree(commit.getTree());
+            treeWalk.setRecursive(true);
+            while (treeWalk.next()) {
+                String path = treeWalk.getPathString();
+                for (String subPath : subPaths) {
+                    if (path.equals(subPath) || path.startsWith(subPath + "/")) {
+                        matched.add(path);
+                        missing.remove(subPath);
+                    }
+                }
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException("Git 知识库子路径不存在: " + String.join(", ", missing));
+        }
+        return List.copyOf(matched);
+    }
+
+    private void clearWorkingTree(Path workTree) throws IOException {
+        if (!Files.exists(workTree)) {
+            return;
+        }
+        Path normalizedWorkTree = workTree.toAbsolutePath().normalize();
+        Path gitDir = normalizedWorkTree.resolve(".git").toAbsolutePath().normalize();
+        try (var stream = Files.walk(normalizedWorkTree)) {
+            for (Path path : stream.sorted(Comparator.reverseOrder()).toList()) {
+                Path normalized = path.toAbsolutePath().normalize();
+                if (normalized.equals(normalizedWorkTree) || normalized.startsWith(gitDir)) {
+                    continue;
+                }
+                Files.deleteIfExists(path);
+            }
         }
     }
 
