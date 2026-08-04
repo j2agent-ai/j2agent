@@ -343,7 +343,7 @@ public class ApiProviderConfigService {
     }
 
     /**
-     * 规范化 config：Ollama 空 contextLength 不写入；非 Ollama 剔除 contextLength；非 Anthropic 剔除 maxTokens。
+     * 规范化 config：Ollama 空 contextLength 不写入；非 Ollama 剔除 contextLength；非 Anthropic 或无效 maxTokens 剔除。
      */
     private Map<String, Object> sanitizeConfig(Map<String, Object> config, String apiType, String providerType) {
         if (config == null) {
@@ -358,7 +358,7 @@ public class ApiProviderConfigService {
         } else {
             copy.remove("contextLength");
         }
-        if (!ProviderTypes.LLM_ANTHROPIC.equals(providerType)) {
+        if (!ProviderTypes.LLM_ANTHROPIC.equals(providerType) || readPositiveInteger(copy, "maxTokens") == null) {
             copy.remove("maxTokens");
         }
         sanitizeThinkingFields(copy, providerType);
