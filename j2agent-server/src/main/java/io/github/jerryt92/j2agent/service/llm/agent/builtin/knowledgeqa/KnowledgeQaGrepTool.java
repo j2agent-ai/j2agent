@@ -2,12 +2,14 @@ package io.github.jerryt92.j2agent.service.llm.agent.builtin.knowledgeqa;
 
 import io.github.jerryt92.j2agent.service.llm.agent.builtin.AgentToolContextSupport;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunnableContextKeys;
+import io.github.jerryt92.j2agent.service.rag.RagSourcePublicationService;
 import io.github.jerryt92.j2agent.service.rag.knowledge.KnowledgeCollectionSelection;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeMarkdownImageRewriter;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMetadataService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.ai.document.Document;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
@@ -21,6 +23,7 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -72,6 +75,7 @@ class KnowledgeQaGrepTool {
         List<String> fallbackTokens = splitFallbackTokens(trimmedPattern);
         long startMs = System.currentTimeMillis();
         List<String> blocks = new ArrayList<>();
+        LinkedHashSet<String> matchedSourceFiles = new LinkedHashSet<>();
         int fileCount = 0;
         int matchCount = 0;
         int skippedLargeFiles = 0;
@@ -104,6 +108,7 @@ class KnowledgeQaGrepTool {
                 String relativeFile = normalizedRoot.relativize(file).toString().replace('\\', '/');
                 if (filenameHits.contains(file)) {
                     matchCount++;
+                    matchedSourceFiles.add(relativeFile);
                     blocks.add(formatFilenameMatchBlock(relativeFile, lines));
                     if (matchCount >= MAX_MATCHES) {
                         break;
@@ -114,6 +119,7 @@ class KnowledgeQaGrepTool {
                         break;
                     }
                     matchCount++;
+                    matchedSourceFiles.add(relativeFile);
                     blocks.add(formatMatchBlock(relativeFile, lines, lineIndex));
                 }
             }
@@ -136,8 +142,28 @@ class KnowledgeQaGrepTool {
                         "matchCount={}, skippedLargeFiles={}, hitLimit={}, fileLimit={}, elapsedMs={}",
                 pattern, selectedCollections, fileCount, matchCount, skippedLargeFiles,
                 matchCount >= MAX_MATCHES, fileCount >= MAX_FILES, elapsedMs);
+        publishMatchedSourceFiles(toolContext, matchedSourceFiles);
         return "共 " + matchCount + " 处命中（最多展示 " + MAX_MATCHES + " 处，扫描文件上限 "
                 + MAX_FILES + "）：\n\n" + String.join("\n\n---\n\n", blocks);
+    }
+
+    protected void publishMatchedSourceFiles(ToolContext toolContext, Set<String> matchedSourceFiles) {
+        if (matchedSourceFiles == null || matchedSourceFiles.isEmpty()) {
+            return;
+        }
+        String conversationId = AgentToolContextSupport.parentConversationId(toolContext);
+        if (StringUtils.isBlank(conversationId)) {
+            log.debug("knowledge_qa grep 跳过来源发布: conversationId 为空, files={}", matchedSourceFiles.size());
+            return;
+        }
+        String agentId = AgentToolContextSupport.stringKey(toolContext, AgentRunnableContextKeys.CONTEXT_KEY_AGENT_ID);
+        List<Document> documents = matchedSourceFiles.stream()
+                .map(sourceFile -> Document.builder()
+                        .text("")
+                        .metadata(Map.of("sourceFile", sourceFile))
+                        .build())
+                .toList();
+        RagSourcePublicationService.tryPublishFromRetriever(conversationId, agentId, documents);
     }
 
     @Tool(name = "read_knowledge_repo_file", description = "按相对知识库根的路径读取本轮已选择知识库内的 Markdown 原文。")
