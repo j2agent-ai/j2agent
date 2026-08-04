@@ -82,6 +82,55 @@ class KnowledgeRepositoryServiceCreateTest {
     }
 
     @Test
+    void createSavesAndReturnsRemoteSubPaths() {
+        FakeKnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper();
+        KnowledgeRepositoryService service = service(mapper);
+        KnowledgeRepositoryDtos.UpsertRequest request = request("kb-docs", "https://example.com/docs.git");
+        request.setSubPaths(List.of("docs/", "knowledge_base\\common"));
+
+        KnowledgeRepositoryDtos.Item item = service.create(request);
+
+        assertEquals(List.of("docs", "knowledge_base/common"), item.getSubPaths());
+        assertEquals("{\"subPaths\":[\"docs\",\"knowledge_base/common\"]}", mapper.rows.getFirst().getProtocolConfig());
+    }
+
+    @Test
+    void createRejectsDuplicateRemoteSubPaths() {
+        FakeKnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper();
+        KnowledgeRepositoryService service = service(mapper);
+        KnowledgeRepositoryDtos.UpsertRequest request = request("kb-docs", "https://example.com/docs.git");
+        request.setSubPaths(List.of("docs", "docs/"));
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class, () -> service.create(request));
+
+        assertEquals("subPaths cannot contain duplicate paths", error.getReason());
+    }
+
+    @Test
+    void createRejectsNestedRemoteSubPaths() {
+        FakeKnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper();
+        KnowledgeRepositoryService service = service(mapper);
+        KnowledgeRepositoryDtos.UpsertRequest request = request("kb-docs", "https://example.com/docs.git");
+        request.setSubPaths(List.of("docs", "docs/api"));
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class, () -> service.create(request));
+
+        assertEquals("subPaths cannot contain nested paths", error.getReason());
+    }
+
+    @Test
+    void createRejectsInvalidRemoteSubPaths() {
+        FakeKnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper();
+        KnowledgeRepositoryService service = service(mapper);
+        KnowledgeRepositoryDtos.UpsertRequest request = request("kb-docs", "https://example.com/docs.git");
+        request.setSubPaths(List.of("docs/../api"));
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class, () -> service.create(request));
+
+        assertEquals("subPaths must not contain . or .. segments", error.getReason());
+    }
+
+    @Test
     void remoteSyncSkipsKnowledgeIncrementalSyncWhenWatchDisabled() throws Exception {
         FakeKnowledgeRepositoryMapper mapper = new FakeKnowledgeRepositoryMapper();
         KnowledgeRepoProperties properties = properties();

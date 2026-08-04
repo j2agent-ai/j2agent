@@ -37,6 +37,7 @@ public final class KnowledgeRepositoryDtos {
         private Long lastSyncTime;
         private String lastError;
         private Map<String, Object> protocolConfig;
+        private List<String> subPaths;
         private Boolean hasCredential;
         private List<String> collections;
         private String displayName;
@@ -56,6 +57,7 @@ public final class KnowledgeRepositoryDtos {
         private String remoteUrl;
         private String defaultBranch;
         private Map<String, Object> protocolConfig;
+        private List<String> subPaths;
         private String displayName;
         private String collectionName;
         private List<String> partitionNames;

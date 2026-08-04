@@ -3,6 +3,8 @@ package io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent;
 import io.github.jerryt92.j2agent.model.I18nString;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
+import io.github.jerryt92.j2agent.tools.WebTool;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -11,6 +13,9 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class UniversalAssistantAgent extends AiAgent {
+
+    @Autowired
+    private WebTool webTool;
 
     @Override
     public String getAgentId() {
@@ -48,7 +53,7 @@ public class UniversalAssistantAgent extends AiAgent {
 
     @Override
     protected Object[] buildTools() {
-        return new Object[0];
+        return new Object[]{webTool};
     }
 
     @Override

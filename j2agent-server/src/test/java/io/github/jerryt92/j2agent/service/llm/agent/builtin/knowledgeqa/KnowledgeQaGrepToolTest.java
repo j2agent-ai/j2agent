@@ -13,10 +13,12 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.ai.chat.model.ToolContext;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,7 +33,7 @@ class KnowledgeQaGrepToolTest {
     @TempDir
     Path tempDir;
 
-    private KnowledgeQaGrepTool tool;
+    private CapturingKnowledgeQaGrepTool tool;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -49,7 +51,7 @@ class KnowledgeQaGrepToolTest {
         KnowledgeRepoMetadataService metadataService = new KnowledgeRepoMetadataService(
                 properties, mapper, new KnowledgeRepositoryAutoRegistrar(mapper, properties));
         metadataService.init();
-        tool = new KnowledgeQaGrepTool(metadataService, new KnowledgeMarkdownImageRewriter());
+        tool = new CapturingKnowledgeQaGrepTool(metadataService, new KnowledgeMarkdownImageRewriter());
     }
 
     @Test
@@ -68,6 +70,7 @@ class KnowledgeQaGrepToolTest {
         assertTrue(result.contains("命中"));
         assertTrue(result.contains("intelligent_report_kb/report/report.md"));
         assertTrue(result.contains("智能报表支持告警排行统计"));
+        assertTrue(tool.publishedSourceFiles.contains("intelligent_report_kb/report/report.md"));
     }
 
     @Test
@@ -76,6 +79,27 @@ class KnowledgeQaGrepToolTest {
 
         assertTrue(result.contains("命中"));
         assertTrue(result.contains("knowledge_base/common/guide.md"));
+        assertTrue(tool.publishedSourceFiles.contains("knowledge_base/common/guide.md"));
+    }
+
+    @Test
+    void grep_publishesSameFileOnlyOnceWhenMultipleLinesHit() throws IOException {
+        writeKnowledgeRepo("knowledge_base", "knowledge_base", "common/multi.md",
+                "甲乙丙丁第一行。\n甲乙丙丁第二行。\n");
+
+        String result = tool.grepKnowledgeRepo("甲乙丙丁", "common", context("knowledge_base"));
+
+        assertTrue(result.contains("命中"));
+        assertTrue(tool.publishedSourceFiles.contains("knowledge_base/common/multi.md"));
+        assertTrue(tool.publishedSourceFiles.size() == 1);
+    }
+
+    @Test
+    void grep_doesNotPublishWhenNoMatch() {
+        String result = tool.grepKnowledgeRepo("zzzz-not-found-term", "", context("knowledge_base"));
+
+        assertTrue(result.contains("行级检索未命中"));
+        assertTrue(tool.publishedSourceFiles.isEmpty());
     }
 
     @Test
@@ -125,5 +149,20 @@ class KnowledgeQaGrepToolTest {
         return new ToolContext(Map.of(
                 AgentRunnableContextKeys.CONTEXT_KEY_KNOWLEDGE_COLLECTIONS,
                 List.of(collections)));
+    }
+
+    private static final class CapturingKnowledgeQaGrepTool extends KnowledgeQaGrepTool {
+
+        final List<String> publishedSourceFiles = new ArrayList<>();
+
+        CapturingKnowledgeQaGrepTool(KnowledgeRepoMetadataService metadataService,
+                                     KnowledgeMarkdownImageRewriter imageRewriter) {
+            super(metadataService, imageRewriter);
+        }
+
+        @Override
+        protected void publishMatchedSourceFiles(ToolContext toolContext, Set<String> matchedSourceFiles) {
+            publishedSourceFiles.addAll(matchedSourceFiles);
+        }
     }
 }

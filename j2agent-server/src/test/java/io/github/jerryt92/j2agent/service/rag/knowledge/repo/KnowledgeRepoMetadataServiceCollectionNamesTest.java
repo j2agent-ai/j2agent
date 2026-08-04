@@ -37,10 +37,34 @@ class KnowledgeRepoMetadataServiceCollectionNamesTest {
         assertEquals(Set.of("rc_wiki", "other"), names);
     }
 
+    @Test
+    void listConfiguredScanPathsUsesRemoteSubPaths() throws Exception {
+        KnowledgeRepositoryMapper mapper = mock(KnowledgeRepositoryMapper.class);
+        KnowledgeRepositoryPo full = repository("repo-a", "full");
+        KnowledgeRepositoryPo sparse = repository("repo-b", "sparse");
+        sparse.setProtocolConfig("{\"subPaths\":[\"docs\",\"knowledge_base/common\"]}");
+        when(mapper.selectEnabledAll()).thenReturn(List.of(full, sparse));
+        KnowledgeRepoProperties properties = new KnowledgeRepoProperties();
+        properties.setRootPath(tempDir.toString());
+        KnowledgeRepositoryAutoRegistrar autoRegistrar = new KnowledgeRepositoryAutoRegistrar(mapper, properties);
+        KnowledgeRepoMetadataService service = new KnowledgeRepoMetadataService(properties, mapper, autoRegistrar);
+        service.init();
+
+        List<Path> paths = service.listConfiguredScanPaths();
+
+        Path root = tempDir.toRealPath();
+        assertEquals(List.of(
+                root.resolve("repo-a").toAbsolutePath().normalize(),
+                root.resolve("repo-b").resolve("docs").toAbsolutePath().normalize(),
+                root.resolve("repo-b").resolve("knowledge_base/common").toAbsolutePath().normalize()
+        ), paths);
+    }
+
     private static KnowledgeRepositoryPo repository(String repoCode, String collection) {
         KnowledgeRepositoryPo po = new KnowledgeRepositoryPo();
         po.setRepoCode(repoCode);
         po.setEnabled(true);
+        po.setProtocolConfig("{}");
         po.setMetadataConfig("{\"collectionName\":\"" + collection
                 + "\",\"partitionNames\":[],\"minHeadingLevel\":3,\"filenameAsTitle\":true}");
         return po;
