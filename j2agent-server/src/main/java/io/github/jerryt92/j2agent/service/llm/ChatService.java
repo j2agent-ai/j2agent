@@ -45,6 +45,8 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
@@ -65,6 +67,7 @@ import java.util.function.Consumer;
 @Service
 public class ChatService {
     private static final String ANONYMOUS_USER = "anonymous";
+    private static final String FAILURE_ASSISTANT_MESSAGE = "[Error]";
     private final ChatContextService chatContextService;
     private final ChatInputProperties chatInputProperties;
     private final ActiveChatTurnProperties activeChatTurnProperties;
@@ -381,8 +384,8 @@ public class ChatService {
                         t,
                         () -> {
                             unbindThinkingOverride.run();
-                            persistStreamedAssistant(agentChatMemory, turnConversationId, streamedContent,
-                                    streamedReasoning, streamedTextLock, streamedAssistantFlushed, true);
+                            persistFailedAssistant(agentChatMemory, turnConversationId, streamedContent,
+                                    streamedReasoning, streamedTextLock, streamedAssistantFlushed);
                             StreamedAssistantPersistence.disable(turnConversationId);
                             TurnUsageAccumulator.clear(turnConversationId);
                             TurnRagSourceRegistry.clear(turnConversationId);
@@ -818,6 +821,82 @@ public class ChatService {
         chatMemory.add(conversationId,
                 List.of(buildStreamedAssistantMessage(content, reasoning, addEllipsis,
                         ragInfosJson, pendingQuestionJson)));
+    }
+
+    /**
+     * 异常终止时保证本轮有一条可回放的 assistant 收尾消息；若尾部存在未闭合 tool_call，先补 tool_result。
+     */
+    void persistFailedAssistant(ChatMemory chatMemory, String conversationId,
+                                StringBuilder streamedContent,
+                                StringBuilder streamedReasoning,
+                                Object streamedTextLock,
+                                AtomicBoolean once) {
+        if (!once.compareAndSet(false, true)) {
+            return;
+        }
+        String content;
+        String reasoning;
+        synchronized (streamedTextLock) {
+            content = streamedContent.toString();
+            reasoning = streamedReasoning.toString();
+        }
+        String ragInfosJson = TurnRagSourceRegistry.drainRagInfosJson(conversationId);
+        String pendingQuestionJson = TurnAskQuestionRegistry.drainQuestionJson(conversationId);
+        if (!content.isEmpty() || !reasoning.isEmpty()
+                || StringUtils.isNotBlank(ragInfosJson)
+                || StringUtils.isNotBlank(pendingQuestionJson)) {
+            persistMissingToolResults(chatMemory, conversationId);
+            chatMemory.add(conversationId,
+                    List.of(buildStreamedAssistantMessage(content, reasoning, true,
+                            ragInfosJson, pendingQuestionJson)));
+            return;
+        }
+        persistMissingToolResults(chatMemory, conversationId);
+        chatMemory.add(conversationId, List.of(new AssistantMessage(FAILURE_ASSISTANT_MESSAGE)));
+    }
+
+    private void persistMissingToolResults(ChatMemory chatMemory, String conversationId) {
+        if (chatMemory == null || StringUtils.isBlank(conversationId)) {
+            return;
+        }
+        List<AssistantMessage.ToolCall> missingToolCalls = findTrailingUnansweredToolCalls(chatMemory, conversationId);
+        if (missingToolCalls.isEmpty()) {
+            return;
+        }
+        List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>(missingToolCalls.size());
+        for (AssistantMessage.ToolCall toolCall : missingToolCalls) {
+            responses.add(new ToolResponseMessage.ToolResponse(
+                    toolCall.id(), toolCall.name(), FAILURE_ASSISTANT_MESSAGE));
+        }
+        chatMemory.add(conversationId, List.of(ToolResponseMessage.builder().responses(responses).build()));
+    }
+
+    private List<AssistantMessage.ToolCall> findTrailingUnansweredToolCalls(ChatMemory chatMemory,
+                                                                            String conversationId) {
+        List<Message> messages;
+        try {
+            messages = chatMemory.get(conversationId);
+        } catch (Exception e) {
+            log.warn("读取聊天记忆以补齐失败 tool_result 时异常: {}", e.toString());
+            return List.of();
+        }
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            Message message = messages.get(i);
+            if (message instanceof ToolResponseMessage || isPlainAssistant(message)) {
+                return List.of();
+            }
+            if (message instanceof AssistantMessage assistantMessage && assistantMessage.hasToolCalls()) {
+                return assistantMessage.getToolCalls();
+            }
+        }
+        return List.of();
+    }
+
+    private static boolean isPlainAssistant(Message message) {
+        return message instanceof AssistantMessage assistantMessage && !assistantMessage.hasToolCalls();
     }
 
     /**

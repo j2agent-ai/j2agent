@@ -4,6 +4,7 @@ import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
@@ -17,6 +18,8 @@ import java.util.List;
  * {@link org.springframework.ai.chat.memory.ChatMemoryRepository#findByConversationId} 直读全量。
  */
 public final class AppendOnlyWindowChatMemory implements ChatMemory {
+
+    private static final String FAILURE_ASSISTANT_MESSAGE = "发生错误";
 
     private final ChatMemoryRepository chatMemoryRepository;
     private final int maxMessages;
@@ -44,11 +47,11 @@ public final class AppendOnlyWindowChatMemory implements ChatMemory {
         Assert.hasText(conversationId, "conversationId cannot be null or empty");
         List<Message> all = this.chatMemoryRepository.findByConversationId(conversationId);
         List<Message> replayable = filterReplayable(all);
-        return MessageWindowTrimmer.trimToWindow(replayable, this.maxMessages);
+        return filterReplayable(MessageWindowTrimmer.trimToWindow(replayable, this.maxMessages));
     }
 
     /**
-     * 过滤出可安全送入 LLM 的消息：移除无正文、无 tool_calls 的空 assistant 消息。
+     * 过滤出可安全送入 LLM 的消息：移除空 assistant，并将孤立 tool_call 替换成失败 assistant。
      * <p>
      * 部分 assistant 行仅含 reasoningContent（深度思考中断补偿），对 UI 历史有价值但不应参与回放
      * ——Provider 要求 assistant 消息至少提供 content、tool_calls 或等价字段。
@@ -58,15 +61,36 @@ public final class AppendOnlyWindowChatMemory implements ChatMemory {
             return messages == null ? List.of() : messages;
         }
         List<Message> result = new ArrayList<>(messages.size());
-        for (Message m : messages) {
+        boolean acceptingToolResponses = false;
+        for (int i = 0; i < messages.size(); i++) {
+            Message m = messages.get(i);
             if (m instanceof AssistantMessage am) {
                 if (!am.hasToolCalls() && !StringUtils.hasText(am.getText())) {
                     continue;
                 }
+                if (am.hasToolCalls() && !isFollowedByToolResponse(messages, i)) {
+                    result.add(new AssistantMessage(FAILURE_ASSISTANT_MESSAGE));
+                    acceptingToolResponses = false;
+                    continue;
+                }
+                acceptingToolResponses = am.hasToolCalls();
+                result.add(m);
+                continue;
             }
+            if (m instanceof ToolResponseMessage) {
+                if (acceptingToolResponses) {
+                    result.add(m);
+                }
+                continue;
+            }
+            acceptingToolResponses = false;
             result.add(m);
         }
         return result;
+    }
+
+    private static boolean isFollowedByToolResponse(List<Message> messages, int index) {
+        return index >= 0 && index + 1 < messages.size() && messages.get(index + 1) instanceof ToolResponseMessage;
     }
 
     @Override
