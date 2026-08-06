@@ -270,12 +270,14 @@ public class ChatService {
             agentChatMemoryRef.set(aiAgentForConversation.getChatMemory());
             final ChatMemory agentChatMemory = agentChatMemoryRef.get();
             final boolean universalAssistant = UniversalAssistantConstants.isUniversalAssistant(resolvedAgentId);
+            final boolean prePersistUserMessage = universalAssistant
+                    || UniversalAssistantConstants.isKnowledgeQaAssistant(resolvedAgentId);
             final List<String> knowledgeCollections = normalizeKnowledgeCollections(request.getKnowledgeCollections());
             if (UniversalAssistantConstants.isKnowledgeQaAssistant(resolvedAgentId)
                     && knowledgeCollections.isEmpty()) {
                 throw new IllegalArgumentException("Knowledge collections are required.");
             }
-            if (universalAssistant) {
+            if (prePersistUserMessage) {
                 ChatTurnLifecycle.persistTurnUserMessage(
                         agentChatMemory, turnConversationId, limitedUserMessage, finalAttachments);
             }
@@ -291,7 +293,7 @@ public class ChatService {
                     knowledgeCollections,
                     toolEventEmitter,
                     false,
-                    universalAssistant);
+                    prePersistUserMessage);
             AgentRunLogger.info(runLogSnapshot, AgentRunEventType.TURN_START,
                     AgentRunLogger.kv(
                             "userMsgLen", limitedUserMessage == null ? 0 : limitedUserMessage.length(),
