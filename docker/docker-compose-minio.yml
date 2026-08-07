@@ -102,7 +102,8 @@ services:
     environment:
       ETCD_USE_EMBED: "false"
       ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: minio:9000
+      MINIO_ADDRESS: minio
+      MINIO_PORT: 9000
       MINIO_ACCESS_KEY_ID: "${MINIO_ROOT_USER}"
       MINIO_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
       MINIO_BUCKET_NAME: milvus-bucket
@@ -119,7 +120,7 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9091/healthz" ]
       interval: 30s
       start_period: 90s
       timeout: 20s

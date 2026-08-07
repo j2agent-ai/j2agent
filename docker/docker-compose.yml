@@ -111,7 +111,8 @@ services:
     environment:
       ETCD_USE_EMBED: "false"
       ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: rustfs:9000
+      MINIO_ADDRESS: rustfs
+      MINIO_PORT: 9000
       MINIO_ACCESS_KEY_ID: "${RUSTFS_ACCESS_KEY}"
       MINIO_SECRET_ACCESS_KEY: "${RUSTFS_SECRET_KEY}"
       MINIO_BUCKET_NAME: milvus-bucket
@@ -128,7 +129,7 @@ services:
       rustfs:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9091/healthz" ]
       interval: 30s
       start_period: 90s
       timeout: 20s
