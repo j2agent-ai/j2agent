@@ -59,7 +59,7 @@ public final class SpringAiReasoningMetadataAdapter {
     /**
      * Anthropic redacted thinking 数据键（无可见正文，应跳过）
      */
-    private static final String META_DATA = "sql/data";
+    private static final String META_DATA = "data";
 
     /**
      * 从 Provider metadata 适配出的统一深度思考片段。
@@ -217,6 +217,25 @@ public final class SpringAiReasoningMetadataAdapter {
     static boolean isThinkingBlock(Map<String, Object> metadata) {
         return Boolean.TRUE.equals(metadata.get(META_THINKING))
                 || TYPE_THINKING.equals(metadata.get(META_TYPE));
+    }
+
+    /**
+     * 判断当前 {@link AssistantMessage} 是否为深度思考块（非最终回答）。
+     * <p>Anthropic 非流式会把 thinking / redacted_thinking / text 拆成多个 Generation，
+     * 同步取文案时应跳过此类块，避免只读 {@code ChatResponse#getResult()} 首块导致空结果。
+     */
+    public static boolean isThinkingContentMessage(AssistantMessage message) {
+        if (message == null) {
+            return false;
+        }
+        Map<String, Object> metadata = message.getMetadata() != null ? message.getMetadata() : Map.of();
+        if (isThinkingBlock(metadata) || metadata.containsKey(META_SIGNATURE)) {
+            return true;
+        }
+        // redacted_thinking：仅有 data、无可见正文
+        return metadata.containsKey(META_DATA)
+                && !StringUtils.hasText(message.getText())
+                && !message.hasToolCalls();
     }
 
     /**
