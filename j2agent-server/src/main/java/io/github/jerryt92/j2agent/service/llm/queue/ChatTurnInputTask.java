@@ -30,4 +30,6 @@ public class ChatTurnInputTask {
     private UserContextBo userContext;
     /** 入队时间戳，用于后续排队耗时统计或过期策略扩展。 */
     private long enqueueTimeMs;
+    /** 请求级 traceId，worker 线程恢复到 MDC 以便日志检索。 */
+    private String traceId;
 }
