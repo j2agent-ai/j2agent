@@ -2,7 +2,7 @@
 
 [![GitHub](https://img.shields.io/badge/GitHub-J2Agent-blue?logo=github)](https://github.com/j2agent-ai/j2agent)
 
-Live demo: [https://j2agent.aiibii.com/](https://j2agent.aiibii.com/)
+Live demo: [https://j2agent.jerryt92.top/](https://j2agent.jerryt92.top/)
 
 J2Agent is an Agent runtime platform built on Java Spring AI. Powered by Spring AI and Spring AI Alibaba, it provides agent execution, multi-agent routing, RAG retrieval augmentation, MCP / Skills tool integration, pluggable business agents, and infrastructure integration with PostgreSQL, Redis, and Milvus.
 
