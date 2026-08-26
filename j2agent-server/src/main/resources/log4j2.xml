@@ -5,11 +5,11 @@
         <!-- 公共配置 -->
         <!-- log文件存放路径./当前工程目录下 -->
         <property name="basePath">./volume/logs</property>
-        <!-- 输入信息格式 -->
+        <!-- 输入信息格式；%X{traceId} 来自 MDC，便于按 TRACE_ID 检索 -->
         <!-- 带行号显示,对日志输出的性能有影响,在控制台上点击可以直接定位到代码 -->
-        <property name="consoleLogPattern">%d{yyyy-MM-dd HH:mm:ss.SSS} [%highlight{%-5p}][%t][%c{1.}.%M:%L] - %m%n</property>
-        <property name="logFilePattern">%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p][%t][%C.%M:%L] - %m%n</property>
-        <property name="agentRunLogPattern">%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p][%t] %m%n</property>
+        <property name="consoleLogPattern">%d{yyyy-MM-dd HH:mm:ss.SSS} [%highlight{%-5p}][%t][traceId=%X{traceId}][%c{1.}.%M:%L] - %m%n</property>
+        <property name="logFilePattern">%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p][%t][traceId=%X{traceId}][%C.%M:%L] - %m%n</property>
+        <property name="agentRunLogPattern">%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p][%t][traceId=%X{traceId}] %m%n</property>
         <!-- 日志默认切割的最小单位 -->
         <property name="fileSize">20MB</property>
         <!-- 日志默认输出级别 -->
@@ -53,6 +53,15 @@
                 <ThresholdFilter level="INFO" onMatch="ACCEPT" onMismatch="DENY"/>
             </Filters>
         </RollingFile>
+
+        <!-- 将 Spring AI RetryUtils 的 WARN 提升为 ERROR，再写入控制台与文件 -->
+        <Rewrite name="RetryWarnAsError">
+            <LoggerNameLevelRewritePolicy logger="org.springframework.ai.retry.RetryUtils">
+                <KeyValuePair key="WARN" value="ERROR"/>
+            </LoggerNameLevelRewritePolicy>
+            <AppenderRef ref="InfoFile"/>
+            <AppenderRef ref="Console"/>
+        </Rewrite>
     </appenders>
     <!--定义logger,只有定义了logger并引入的appender,appender才会生效-->
     <loggers>
@@ -65,8 +74,7 @@
         </logger>
         <!--建立一个默认的root的logger-->
         <root level="${outputLogLevel}">
-            <appender-ref ref="InfoFile"/>
-            <appender-ref ref="Console"/>
+            <appender-ref ref="RetryWarnAsError"/>
         </root>
     </loggers>
 </configuration>

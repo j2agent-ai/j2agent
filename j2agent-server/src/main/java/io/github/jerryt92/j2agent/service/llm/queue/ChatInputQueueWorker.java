@@ -1,6 +1,7 @@
 package io.github.jerryt92.j2agent.service.llm.queue;
 
 import io.github.jerryt92.j2agent.config.redis.RedisKeyNamespaces;
+import io.github.jerryt92.j2agent.config.web.TraceIdContext;
 import io.github.jerryt92.j2agent.model.AgentUiEventEnvelope;
 import io.github.jerryt92.j2agent.model.ChatCallback;
 import io.github.jerryt92.j2agent.service.llm.ChatService;
@@ -10,6 +11,7 @@ import org.redisson.api.RedissonClient;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import jakarta.annotation.PreDestroy;
 import java.util.ArrayList;
@@ -100,7 +102,7 @@ public class ChatInputQueueWorker {
                 Thread.currentThread().interrupt();
                 return;
             } catch (Throwable t) {
-                log.warn("Chat input queue worker failed", t);
+                log.error("Chat input queue worker failed", t);
             } finally {
                 if (sessionKey != null) {
                     queueManager.requeueIfPending(sessionKey);
@@ -113,24 +115,29 @@ public class ChatInputQueueWorker {
      * 执行单条任务。queued 阶段若会话或连接已取消，直接丢弃任务。
      */
     private void process(String sessionKey, ChatTurnInputTask task) throws InterruptedException {
-        if (callbackRegistry.isCancelled(task.getContextId(), task.getAgentId(), task.getSubscriptionId())) {
-            log.debug("Drop queued chat task because subscription was cancelled, contextId={}, agentId={}, subscriptionId={}",
-                    task.getContextId(), task.getAgentId(), task.getSubscriptionId());
-            return;
-        }
-        RLock lock = redissonClient.getLock(redisKeyNamespaces.key("chat:input:lock:" + sessionKey));
-        lock.lock();
+        bindTraceId(task);
         try {
             if (callbackRegistry.isCancelled(task.getContextId(), task.getAgentId(), task.getSubscriptionId())) {
+                log.debug("Drop queued chat task because subscription was cancelled, contextId={}, agentId={}, subscriptionId={}",
+                        task.getContextId(), task.getAgentId(), task.getSubscriptionId());
                 return;
             }
-            runChatTurn(task);
-        } finally {
+            RLock lock = redissonClient.getLock(redisKeyNamespaces.key("chat:input:lock:" + sessionKey));
+            lock.lock();
             try {
-                lock.unlock();
-            } catch (IllegalMonitorStateException ignored) {
-                log.debug("Chat input lock already released, sessionKey={}", sessionKey);
+                if (callbackRegistry.isCancelled(task.getContextId(), task.getAgentId(), task.getSubscriptionId())) {
+                    return;
+                }
+                runChatTurn(task);
+            } finally {
+                try {
+                    lock.unlock();
+                } catch (IllegalMonitorStateException ignored) {
+                    log.debug("Chat input lock already released, sessionKey={}", sessionKey);
+                }
             }
+        } finally {
+            TraceIdContext.clear();
         }
     }
 
@@ -175,6 +182,15 @@ public class ChatInputQueueWorker {
         terminal.await();
         callbackRegistry.bindWebsocketCloseHandler(
                 task.getContextId(), task.getAgentId(), task.getSubscriptionId(), null);
+    }
+
+    /** 从任务恢复 MDC；旧任务缺字段时补生成。 */
+    private static void bindTraceId(ChatTurnInputTask task) {
+        if (task != null && StringUtils.hasText(task.getTraceId())) {
+            TraceIdContext.set(task.getTraceId());
+        } else {
+            TraceIdContext.currentOrNew();
+        }
     }
 
     private static void signalTerminal(CountDownLatch terminal, AtomicBoolean terminalSignalled) {

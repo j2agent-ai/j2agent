@@ -2,6 +2,7 @@ package io.github.jerryt92.j2agent.controller;
 
 import com.alibaba.fastjson2.JSONObject;
 import io.github.jerryt92.j2agent.config.web.AutoRegisterWebSocketHandler;
+import io.github.jerryt92.j2agent.config.web.TraceIdContext;
 import io.github.jerryt92.j2agent.model.AgentEventPhase;
 import io.github.jerryt92.j2agent.model.AgentEventType;
 import io.github.jerryt92.j2agent.model.AgentInfoList;
@@ -246,6 +247,9 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
         bindWebSocketCallback(wsSession, chatChatCallback);
         chatCallbackRegistry.register(contextId, agentId, chatChatCallback.subscriptionId, chatChatCallback);
         chatCallbackRegistry.clearSessionCancelled(contextId, agentId);
+        // 每轮对话生成独立 traceId；入队后由 worker 恢复到 MDC
+        TraceIdContext.clear();
+        String traceId = TraceIdContext.currentOrNew();
         ChatTurnInputTask task = new ChatTurnInputTask(
                 contextId,
                 agentId,
@@ -253,15 +257,22 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
                 UUIDv7Utils.randomUUIDv7(),
                 chatRequestDto,
                 userContextBo,
-                System.currentTimeMillis());
+                System.currentTimeMillis(),
+                traceId);
         ChatEnqueueResult enqueueResult = chatInputQueueManager.enqueue(task);
         if (enqueueResult.status() == ChatEnqueueResult.Status.ENQUEUED) {
+            TraceIdContext.clear();
             return;
         }
         if (enqueueResult.status() == ChatEnqueueResult.Status.DISABLED) {
-            chatService.handleChat(chatChatCallback, chatRequestDto, userContextBo, agentId);
+            try {
+                chatService.handleChat(chatChatCallback, chatRequestDto, userContextBo, agentId);
+            } finally {
+                TraceIdContext.clear();
+            }
             return;
         }
+        TraceIdContext.clear();
         chatOutputDispatcher.fail(contextId, agentId, chatChatCallback.subscriptionId,
                 enqueueResult.errorCode(), new IllegalStateException(enqueueResult.errorMessage()));
     }

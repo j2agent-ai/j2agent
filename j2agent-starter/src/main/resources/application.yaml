@@ -75,8 +75,6 @@ mybatis:
   file-path:
     export-file: /var/backup/ftp/virtual/exportfiles/logs
 j2agent:
-  https:
-    redirect-port: ${J2AGENT_HTTP_REDIRECT_PORT:}
   storage:
     # type 可选 s3、aliyun-oss（阿里云 OSS）或 qiniu（七牛云）
     enabled: true

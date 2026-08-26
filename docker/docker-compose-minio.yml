@@ -4,6 +4,7 @@ x-middleware-images:
   etcd: &etcd_image quay.io/coreos/etcd:v3.5.25
   minio: &minio_image minio/minio:RELEASE.2024-12-18T13-15-44Z
   milvus: &milvus_image milvusdb/milvus:v2.6.18
+  nginx: &nginx_image nginx:1.28-alpine
 
 services:
   postgres:
@@ -133,15 +134,11 @@ services:
     build:
       context: ..
       dockerfile: docker/j2agent/Dockerfile
-    ports:
-      - "${J2AGENT_PORT}:${J2AGENT_PORT}"
-      - "${J2AGENT_HTTP_REDIRECT_PORT:-${J2AGENT_PORT}}:${J2AGENT_HTTP_REDIRECT_PORT:-${J2AGENT_PORT}}"
     environment:
       JWT_SECRET: "${JWT_SECRET}"
       JAVA_OPTS: "${JAVA_OPTS}"
-      SPRING_OPTIONS: "${SPRING_OPTIONS} --server.ssl.enabled=${J2AGENT_HTTPS_ENABLED:-false} --server.ssl.certificate=/opt/j2agent/volume/certs/${J2AGENT_HTTPS_CERT_FILE:-j2agent.crt} --server.ssl.certificate-private-key=/opt/j2agent/volume/certs/${J2AGENT_HTTPS_KEY_FILE:-j2agent.key}"
+      SPRING_OPTIONS: "${SPRING_OPTIONS}"
       J2AGENT_PORT: "${J2AGENT_PORT}"
-      J2AGENT_HTTP_REDIRECT_PORT: "${J2AGENT_HTTP_REDIRECT_PORT}"
       J2AGENT_DB_HOST: "${J2AGENT_DB_HOST}"
       J2AGENT_DB_PORT: "${J2AGENT_DB_PORT}"
       J2AGENT_DB_USERNAME: "${J2AGENT_DB_USERNAME}"
@@ -175,7 +172,6 @@ services:
     volumes:
       - ${J2AGENT_VOLUMES_PATH}${DIR_PATH_SEPARATOR}volumes${DIR_PATH_SEPARATOR}j2agent:/opt/j2agent/volume
       - ${J2AGENT_VOLUMES_PATH}${DIR_PATH_SEPARATOR}volumes${DIR_PATH_SEPARATOR}j2agent${DIR_PATH_SEPARATOR}knowledge-repo:/opt/j2agent/volume/knowledge-repo
-      - ${J2AGENT_VOLUMES_PATH}${DIR_PATH_SEPARATOR}volumes${DIR_PATH_SEPARATOR}j2agent${DIR_PATH_SEPARATOR}certs:/opt/j2agent/volume/certs
       - ${J2AGENT_VOLUMES_PATH}${DIR_PATH_SEPARATOR}volumes${DIR_PATH_SEPARATOR}j2agent${DIR_PATH_SEPARATOR}plugins${DIR_PATH_SEPARATOR}agents:/opt/j2agent/volume/plugins/agents
       - ${J2AGENT_VOLUMES_PATH}${DIR_PATH_SEPARATOR}volumes${DIR_PATH_SEPARATOR}j2agent${DIR_PATH_SEPARATOR}plugins${DIR_PATH_SEPARATOR}skills:/opt/j2agent/volume/plugins/skills
     depends_on:
@@ -185,6 +181,45 @@ services:
         condition: service_healthy
       milvus:
         condition: service_healthy
+    restart: unless-stopped
+  nginx:
+    image: *nginx_image
+    platform: linux/amd64
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /opt/j2agent/nginx-config/templates /opt/j2agent/nginx-config/http-templates /opt/j2agent/nginx-config/docker-entrypoint.d
+        cp -Rpf /defaults/templates/. /opt/j2agent/nginx-config/templates/
+        cp -Rpf /defaults/http-templates/. /opt/j2agent/nginx-config/http-templates/
+        cp -Rpf /defaults/docker-entrypoint.d/. /opt/j2agent/nginx-config/docker-entrypoint.d/
+        /bin/sh /opt/j2agent/nginx-config/docker-entrypoint.d/10-configure-http.sh
+        exec /docker-entrypoint.sh nginx -g 'daemon off;'
+    ports:
+      - "${J2AGENT_NGINX_PORT:-30112}:443"
+      - "${J2AGENT_HTTP_REDIRECT_PORT:-30113}:80"
+    environment:
+      J2AGENT_PORT: "${J2AGENT_PORT}"
+      J2AGENT_NGINX_PORT: "${J2AGENT_NGINX_PORT:-30112}"
+      J2AGENT_ENFORCE_HTTPS: "${J2AGENT_ENFORCE_HTTPS:-false}"
+      J2AGENT_HTTPS_CERT_FILE: "${J2AGENT_HTTPS_CERT_FILE:-j2agent.crt}"
+      J2AGENT_HTTPS_KEY_FILE: "${J2AGENT_HTTPS_KEY_FILE:-j2agent.key}"
+    volumes:
+      - ${J2AGENT_VOLUMES_PATH}${DIR_PATH_SEPARATOR}volumes${DIR_PATH_SEPARATOR}nginx${DIR_PATH_SEPARATOR}certs:/etc/nginx/certs:ro
+      - ${J2AGENT_VOLUMES_PATH}${DIR_PATH_SEPARATOR}volumes${DIR_PATH_SEPARATOR}nginx${DIR_PATH_SEPARATOR}templates:/etc/nginx/templates:ro
+      - ${J2AGENT_VOLUMES_PATH}${DIR_PATH_SEPARATOR}volumes${DIR_PATH_SEPARATOR}nginx${DIR_PATH_SEPARATOR}http-templates:/etc/nginx/http-templates:ro
+      - ${J2AGENT_VOLUMES_PATH}${DIR_PATH_SEPARATOR}volumes${DIR_PATH_SEPARATOR}nginx:/opt/j2agent/nginx-config
+      - ./nginx/templates:/defaults/templates:ro
+      - ./nginx/http-templates:/defaults/http-templates:ro
+      - ./nginx/docker-entrypoint.d:/defaults/docker-entrypoint.d:ro
+    depends_on:
+      j2agent:
+        condition: service_started
+    healthcheck:
+      test: [ "CMD-SHELL", "nginx -t" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: unless-stopped
 networks:
   default:

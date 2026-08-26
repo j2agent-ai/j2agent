@@ -14,13 +14,13 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-默认启动只暴露 HTTP。如需启用 HTTPS，先生成本地自签证书：
+默认由 Nginx 暴露 HTTPS，`j2agent` 应用端口仅在 Compose 网络内使用。首次启动前生成本地自签证书：
 
 ```bash
 ./gen-self-signed-cert.sh
 ```
 
-证书默认生成到 `${J2AGENT_VOLUMES_PATH}/volumes/j2agent/certs/j2agent.crt` 与 `${J2AGENT_VOLUMES_PATH}/volumes/j2agent/certs/j2agent.key`，容器内读取 `/opt/j2agent/volume/certs`，格式兼容 nginx 常用 PEM 证书。也可以传入域名/IP 生成 SAN：
+证书默认生成到 `${J2AGENT_VOLUMES_PATH}/volumes/nginx/certs/j2agent.crt` 与 `${J2AGENT_VOLUMES_PATH}/volumes/nginx/certs/j2agent.key`，由 Nginx 容器只读加载，格式兼容 nginx 常用 PEM 证书。也可以传入域名/IP 生成 SAN：
 
 ```bash
 ./gen-self-signed-cert.sh localhost 127.0.0.1 j2agent.example.com
@@ -29,13 +29,7 @@ docker compose up -d --build
 然后编辑 `.env`：
 
 ```properties
-J2AGENT_HTTPS_ENABLED=true
-```
-
-如果需要保留 HTTP 入口并自动跳转到 HTTPS，可额外设置 HTTP 重定向端口：
-
-```properties
-J2AGENT_HTTP_REDIRECT_PORT=30110
+J2AGENT_NGINX_PORT=30112
 ```
 
 再按默认命令启动：
@@ -44,7 +38,26 @@ J2AGENT_HTTP_REDIRECT_PORT=30110
 docker compose up -d --build
 ```
 
-HTTPS 模式不改变端口，只把 `J2AGENT_PORT` 上的访问协议从 HTTP 切换为 HTTPS；应用容器会直接启用 Spring Boot HTTPS，不引入反向代理。配置 `J2AGENT_HTTP_REDIRECT_PORT` 后，访问 `http://localhost:30110/...` 会重定向到 `https://localhost:30111/...`。自签证书会触发浏览器安全提示，生产环境请替换 `${J2AGENT_VOLUMES_PATH}/volumes/j2agent/certs` 下的证书和私钥。
+访问 `https://localhost:${J2AGENT_NGINX_PORT}`。Nginx 从 `${J2AGENT_VOLUMES_PATH}/volumes/nginx/certs` 只读加载证书和私钥，并反向代理到容器内的 `j2agent:${J2AGENT_PORT}`。自签证书会触发浏览器安全提示，生产环境请替换为可信 CA 签发的证书。
+
+Nginx 每次启动前都会将 `docker/nginx` 中的默认模板与启动脚本覆盖复制到 `${J2AGENT_VOLUMES_PATH}/volumes/nginx/{templates,http-templates,docker-entrypoint.d}`，然后从该卷读取配置。服务器上的 Nginx 配置修改会在下次启动时被部署包默认配置覆盖。
+
+证书续期或替换完成后，无需重启应用，执行：
+
+```bash
+./reload-nginx-cert.sh
+```
+
+脚本会先校验 Nginx 配置，再优雅 reload；已有连接不受中断，新建 TLS 连接将使用新证书。
+
+HTTP 端口始终由 Nginx 监听；通过 `.env` 的开关决定直接 HTTP 访问或重定向到 HTTPS：
+
+```properties
+J2AGENT_HTTP_REDIRECT_PORT=30110
+J2AGENT_ENFORCE_HTTPS=true
+```
+
+执行 `docker compose up -d` 后，HTTP 请求将返回 308 到 HTTPS。默认值 `J2AGENT_ENFORCE_HTTPS=false`，HTTP 请求直接反代到应用。
 
 构建 `j2agent` 镜像时，Dockerfile 会**优先**使用 `j2agent/*.tar.gz`（与本目录 `Dockerfile` 同级），否则回退到 `j2agent-starter/target/*.tar.gz`。离线部署建议将 Maven 产出的 `j2agent-*.tar.gz` 放到 `j2agent/` 再构建，详见 [构建与启动 §1.1](../../j2agent-docs/基础设施/docker部署/构建与启动.md#11-镜像构建时如何找到-targz)。
 

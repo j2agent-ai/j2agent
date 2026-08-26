@@ -2,7 +2,7 @@
 
 [![GitHub](https://img.shields.io/badge/GitHub-J2Agent-blue?logo=github)](https://github.com/j2agent-ai/j2agent)
 
-体验地址：[https://j2agent.aiibii.com/](https://j2agent.aiibii.com/)
+体验地址：[https://j2agent.jerryt92.top/](https://j2agent.jerryt92.top/)
 
 J2Agent 是一个基于 Java Spring AI 的 Agent 运行平台。基于 Spring AI 与 Spring AI Alibaba，提供 Agent 推理执行、多智能体路由、RAG 检索增强、MCP / Skills 工具接入与可插拔业务 Agent 扩展，并集成 PostgreSQL、Redis、Milvus 等基础设施。
 
@@ -48,7 +48,7 @@ git clone -b dist https://github.com/j2agent-ai/j2agent-ui.git ${J2AGENT_VOLUMES
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-默认部署只暴露 HTTP。如果需要启用 HTTPS，先生成一套本地自签证书（兼容 nginx 的 `.crt` / `.key` PEM 格式）：
+部署通过 Nginx 暴露 HTTPS，应用端口只在 Compose 网络内使用。首次部署先生成一套本地自签证书（兼容 nginx 的 `.crt` / `.key` PEM 格式）：
 
 ```shell
 docker/gen-self-signed-cert.sh
@@ -57,13 +57,7 @@ docker/gen-self-signed-cert.sh
 然后编辑 `docker/.env`：
 
 ```properties
-J2AGENT_HTTPS_ENABLED=true
-```
-
-如果需要保留 HTTP 入口并自动跳转到 HTTPS，可额外设置 HTTP 重定向端口：
-
-```properties
-J2AGENT_HTTP_REDIRECT_PORT=30110
+J2AGENT_NGINX_PORT=30112
 ```
 
 再按默认命令启动：
@@ -72,26 +66,25 @@ J2AGENT_HTTP_REDIRECT_PORT=30110
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-HTTPS 模式不改变端口，只把 `J2AGENT_PORT` 上的访问协议从 HTTP 切换为 HTTPS。应用容器会直接启用 Spring Boot HTTPS，并从 `/opt/j2agent/volume/certs` 读取证书。配置 `J2AGENT_HTTP_REDIRECT_PORT` 后，访问 `http://localhost:30110/...` 会重定向到 `https://localhost:30111/...`。自签证书会触发浏览器安全提示，生产环境请替换为可信 CA 签发的证书。
+访问 `https://localhost:${J2AGENT_NGINX_PORT}`。Nginx 从 `${J2AGENT_VOLUMES_PATH}/volumes/nginx/certs` 只读加载证书和私钥，并反向代理到容器内 `j2agent:${J2AGENT_PORT}`。自签证书会触发浏览器安全提示，生产环境请替换为可信 CA 签发的证书。续期或替换证书后，在 `docker/` 目录执行 `./reload-nginx-cert.sh`；它会优雅 reload Nginx，不重启应用。
 
 可配置项（`docker/.env`，参考 `docker/.env.example`）：
 
 - `J2AGENT_VOLUMES_PATH`：宿主机配置/数据根目录（默认 `~/j2agent`）
 - `COMPOSE_PROJECT_NAME`：容器前缀（默认 `j2agent`）
-- `J2AGENT_PORT`：服务端口（默认 `30111`；HTTPS 开启后端口不变）
-- `J2AGENT_HTTPS_ENABLED`：是否启用 HTTPS（默认 `false`）
-- `J2AGENT_HTTP_REDIRECT_PORT`：可选 HTTP 重定向端口（默认空，不启用且不额外占用端口；仅 HTTPS 开启时生效）
-- `J2AGENT_HTTPS_CERT_FILE` / `J2AGENT_HTTPS_KEY_FILE`：PEM 证书与私钥文件名，兼容 nginx 常用证书格式；宿主机目录为 `${J2AGENT_VOLUMES_PATH}/volumes/j2agent/certs`
+- `J2AGENT_PORT`：应用容器端口（默认 `30111`，不映射到宿主机）
+- `J2AGENT_NGINX_PORT`：Nginx HTTPS 宿主机端口（默认 `30112`）
+- `J2AGENT_HTTP_REDIRECT_PORT`：Nginx HTTP 宿主机端口（默认 `30113`）
+- `J2AGENT_ENFORCE_HTTPS`：`true` 时 HTTP 返回 308 到 HTTPS；`false`（默认）时 HTTP 直接反代应用
+- `J2AGENT_HTTPS_CERT_FILE` / `J2AGENT_HTTPS_KEY_FILE`：PEM 证书与私钥文件名，兼容 nginx 常用证书格式；宿主机目录为 `${J2AGENT_VOLUMES_PATH}/volumes/nginx/certs`
 - `TAG`：镜像标签
 - `I18N`：国际化语言（如 `zh_CN` / `en_US`）
 
 访问：
 
-- UI：`http://localhost:30111/`（端口以 `J2AGENT_PORT` 为准）
-- 健康检查：`http://localhost:30111/v1/api/j2agent/health-check`
-- HTTPS UI：`https://localhost:30111/`（端口以 `J2AGENT_PORT` 为准）
-- HTTPS 健康检查：`https://localhost:30111/v1/api/j2agent/health-check`
-- HTTP 重定向：`http://localhost:30110/`（配置 `J2AGENT_HTTP_REDIRECT_PORT` 后）
+- UI：`https://localhost:30112/`（端口以 `J2AGENT_NGINX_PORT` 为准）
+- 健康检查：`https://localhost:30112/v1/api/j2agent/health-check`
+- HTTP：`http://localhost:30113/`（`J2AGENT_ENFORCE_HTTPS=true` 时重定向到 HTTPS）
 
 容器内访问宿主机地址：
 

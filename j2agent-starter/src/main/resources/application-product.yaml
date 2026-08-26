@@ -1,5 +1,7 @@
 server:
   port: ${J2AGENT_PORT}
+  # 由 Compose 内的 Nginx 注入 X-Forwarded-*，用于生成正确的 HTTPS 绝对 URL / Secure Cookie。
+  forward-headers-strategy: framework
   servlet:
     encoding:
       charset: UTF-8 # 需要强制设置编码，否则SSE会出现乱码
@@ -75,8 +77,6 @@ mybatis:
   file-path:
     export-file: /var/backup/ftp/virtual/exportfiles/logs
 j2agent:
-  https:
-    redirect-port: ${J2AGENT_HTTP_REDIRECT_PORT:}
   storage:
     enabled: ${J2AGENT_STORAGE_ENABLED}
     type: ${J2AGENT_STORAGE_TYPE}

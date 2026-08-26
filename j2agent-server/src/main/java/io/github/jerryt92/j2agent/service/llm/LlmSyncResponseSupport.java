@@ -1,7 +1,8 @@
 package io.github.jerryt92.j2agent.service.llm;
 
-import io.github.jerryt92.j2agent.service.llm.reasoning.AssistantMessageReasoningExtractor;
 import io.github.jerryt92.j2agent.config.provider.LlmActiveConfig;
+import io.github.jerryt92.j2agent.service.llm.reasoning.AssistantMessageReasoningExtractor;
+import io.github.jerryt92.j2agent.service.llm.reasoning.SpringAiReasoningMetadataAdapter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
@@ -11,6 +12,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.content.Media;
 import org.springframework.core.io.Resource;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
@@ -30,23 +32,45 @@ public final class LlmSyncResponseSupport {
     private LlmSyncResponseSupport() {
     }
 
+    /**
+     * 从同步 {@link ChatResponse} 提取可用助手文本。
+     * <p>深度思考开启时（尤其 Anthropic），响应常含多个 Generation：thinking/redacted 在前、最终回答在后。
+     * 仅读 {@link ChatResponse#getResult()} 会在首块无正文时得到 null，故遍历全部 Generation：
+     * 优先取非 thinking 块的正文；否则回退到 reasoning / thinking 文本（OpenAI 空 content + reasoningContent 等）。
+     */
     public static String extractAssistantText(ChatResponse response) {
-        if (response == null || response.getResult() == null) {
+        if (response == null || CollectionUtils.isEmpty(response.getResults())) {
             return null;
         }
-        AssistantMessage output = response.getResult().getOutput();
-        if (output == null) {
-            return null;
+        String fallbackReasoning = null;
+        for (Generation generation : response.getResults()) {
+            if (generation == null || generation.getOutput() == null) {
+                continue;
+            }
+            AssistantMessage output = generation.getOutput();
+            ChatGenerationMetadata metadata = generation.getMetadata();
+            // thinking / redacted 块不当作最终回答，仅作无答案时的回退
+            if (SpringAiReasoningMetadataAdapter.isThinkingContentMessage(output)) {
+                if (!StringUtils.hasText(fallbackReasoning)) {
+                    String reasoning = AssistantMessageReasoningExtractor.extractFullReasoning(output, metadata);
+                    if (!StringUtils.hasText(reasoning)) {
+                        reasoning = output.getText();
+                    }
+                    if (StringUtils.hasText(reasoning)) {
+                        fallbackReasoning = reasoning.trim();
+                    }
+                }
+                continue;
+            }
+            if (StringUtils.hasText(output.getText())) {
+                return output.getText().trim();
+            }
+            String reasoning = AssistantMessageReasoningExtractor.extractFullReasoning(output, metadata);
+            if (StringUtils.hasText(reasoning)) {
+                return reasoning.trim();
+            }
         }
-        ChatGenerationMetadata metadata = response.getResult().getMetadata();
-        if (StringUtils.hasText(output.getText())) {
-            return output.getText().trim();
-        }
-        String reasoning = AssistantMessageReasoningExtractor.extractFullReasoning(output, metadata);
-        if (StringUtils.hasText(reasoning)) {
-            return reasoning.trim();
-        }
-        return null;
+        return fallbackReasoning;
     }
 
     public static void logMultimodalRequest(LlmActiveConfig cfg, List<Media> media) {
