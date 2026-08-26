@@ -316,11 +316,21 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
         }
     }
 
+    /**
+     * resume 握手：是否仍在跑只信 Redis。
+     * <ol>
+     *   <li>有 snapshot → 回放 trail + 全文，继续观察；</li>
+     *   <li>无 snapshot 但 {@code activeChatTurnRegistry.isActive} 或输入队列非空 → 挂观察连接；</li>
+     *   <li>否则下发 {@code notice: resume-empty}，前端据此清理本地 running 标记。</li>
+     * </ol>
+     * 禁止用历史消息正文 / turnSteps 在前端猜终态。
+     */
     private void handleResumeConnection(String contextId, String agentId, String subscriptionId) {
         if (sendSnapshotIfPresent(contextId, agentId, subscriptionId)) {
             return;
         }
-        if (activeChatTurnRegistry.isActive(contextId, agentId) || chatInputQueueManager.size(contextId, agentId) > 0) {
+        if (activeChatTurnRegistry.isActive(contextId, agentId)
+                || chatInputQueueManager.size(contextId, agentId) > 0) {
             return;
         }
         AgentUiEventEnvelope envelope = AgentEventBuilder.build(
