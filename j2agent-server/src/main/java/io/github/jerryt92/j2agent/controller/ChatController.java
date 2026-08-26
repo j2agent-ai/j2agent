@@ -20,19 +20,19 @@ import io.github.jerryt92.j2agent.model.Translator;
 import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.server.api.ChatApi;
 import io.github.jerryt92.j2agent.service.file.oss.ChatAttachmentUrlResolver;
+import io.github.jerryt92.j2agent.service.llm.ActiveChatTurnRegistry;
 import io.github.jerryt92.j2agent.service.llm.AgentEventBuilder;
 import io.github.jerryt92.j2agent.service.llm.AgentTurnStateMachine;
-import io.github.jerryt92.j2agent.service.llm.ActiveChatTurnRegistry;
 import io.github.jerryt92.j2agent.service.llm.ChatContextBo;
 import io.github.jerryt92.j2agent.service.llm.ChatContextService;
 import io.github.jerryt92.j2agent.service.llm.ChatService;
-import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnControlService;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
+import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnControlService;
 import io.github.jerryt92.j2agent.service.llm.queue.ChatCallbackRegistry;
 import io.github.jerryt92.j2agent.service.llm.queue.ChatEnqueueResult;
 import io.github.jerryt92.j2agent.service.llm.queue.ChatInputQueueManager;
-import io.github.jerryt92.j2agent.service.llm.queue.ChatOutputEventCache;
 import io.github.jerryt92.j2agent.service.llm.queue.ChatOutputDispatcher;
+import io.github.jerryt92.j2agent.service.llm.queue.ChatOutputEventCache;
 import io.github.jerryt92.j2agent.service.llm.queue.ChatOutputSnapshot;
 import io.github.jerryt92.j2agent.service.llm.queue.ChatTurnInputTask;
 import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
@@ -44,9 +44,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -316,11 +316,21 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
         }
     }
 
+    /**
+     * resume 握手：是否仍在跑只信 Redis。
+     * <ol>
+     *   <li>有 snapshot → 回放 trail + 全文，继续观察；</li>
+     *   <li>无 snapshot 但 {@code activeChatTurnRegistry.isActive} 或输入队列非空 → 挂观察连接；</li>
+     *   <li>否则下发 {@code notice: resume-empty}，前端据此清理本地 running 标记。</li>
+     * </ol>
+     * 禁止用历史消息正文 / turnSteps 在前端猜终态。
+     */
     private void handleResumeConnection(String contextId, String agentId, String subscriptionId) {
         if (sendSnapshotIfPresent(contextId, agentId, subscriptionId)) {
             return;
         }
-        if (activeChatTurnRegistry.isActive(contextId, agentId) || chatInputQueueManager.size(contextId, agentId) > 0) {
+        if (activeChatTurnRegistry.isActive(contextId, agentId)
+                || chatInputQueueManager.size(contextId, agentId) > 0) {
             return;
         }
         AgentUiEventEnvelope envelope = AgentEventBuilder.build(

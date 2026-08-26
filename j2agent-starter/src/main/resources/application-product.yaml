@@ -142,9 +142,7 @@ j2agent:
       take-timeout-seconds: 5
       # 空闲会话输入队列 key 的兜底 TTL（秒）
       queued-task-ttl-seconds: 300
-      # 是否启用 output 事件 Redis 短期缓存，用于后续断线重连按 seq 补发
-      output-cache-enabled: true
-      # output 事件缓存 TTL（秒）
+      # 运行中 snapshot 兜底 TTL（秒）；snapshot 默认开启，回答完成后主动删除
       output-cache-ttl-seconds: 300
   active-chat-turn:
     heartbeat-ttl-seconds: 30

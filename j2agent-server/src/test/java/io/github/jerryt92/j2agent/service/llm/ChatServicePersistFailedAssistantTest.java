@@ -42,7 +42,7 @@ class ChatServicePersistFailedAssistantTest {
         verify(chatMemory).add(eq(conversationId), captor.capture());
         Message saved = captor.getValue().get(0);
         assertInstanceOf(AssistantMessage.class, saved);
-        assertEquals("发生错误", saved.getText());
+        assertEquals("[Error]", saved.getText());
     }
 
     @Test
@@ -67,9 +67,9 @@ class ChatServicePersistFailedAssistantTest {
                 addCaptor.getAllValues().get(0).get(0));
         assertEquals("call-1", toolResponse.getResponses().get(0).id());
         assertEquals("demo", toolResponse.getResponses().get(0).name());
-        assertEquals("发生错误", toolResponse.getResponses().get(0).responseData());
+        assertEquals("[Error]", toolResponse.getResponses().get(0).responseData());
         AssistantMessage assistant = assertInstanceOf(AssistantMessage.class, addCaptor.getAllValues().get(1).get(0));
-        assertEquals("发生错误", assistant.getText());
+        assertEquals("[Error]", assistant.getText());
     }
 
     @SuppressWarnings("unchecked")
