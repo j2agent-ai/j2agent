@@ -1,7 +1,5 @@
 package io.github.jerryt92.j2agent.service.llm;
 
-import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamOptions;
-import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamSession;
 import io.github.jerryt92.j2agent.config.chat.ActiveChatTurnProperties;
 import io.github.jerryt92.j2agent.config.chat.ChatInputProperties;
 import io.github.jerryt92.j2agent.logging.llm.AgentRunEventType;
@@ -19,26 +17,28 @@ import io.github.jerryt92.j2agent.model.ChatRequestDto;
 import io.github.jerryt92.j2agent.model.ChatResponseDto;
 import io.github.jerryt92.j2agent.model.MessageDto;
 import io.github.jerryt92.j2agent.model.security.UserContextBo;
+import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamOptions;
+import io.github.jerryt92.j2agent.service.llm.agent.AgentStreamSession;
+import io.github.jerryt92.j2agent.service.llm.agent.builtin.SubAgentStreamBridge;
+import io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent.UniversalAssistantOrchestratorService;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRouter;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunContext;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.constant.AgentThinkingOverride;
+import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
+import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnControlService;
+import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnLifecycle;
+import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
 import io.github.jerryt92.j2agent.service.llm.memory.ChatMemoryMessageCodec;
 import io.github.jerryt92.j2agent.service.llm.memory.ConversationIdCodec;
 import io.github.jerryt92.j2agent.service.llm.queue.ChatOutputEventCache;
 import io.github.jerryt92.j2agent.service.llm.rag.TurnRagSourceRegistry;
-import io.github.jerryt92.j2agent.service.question.TurnAskQuestionRegistry;
 import io.github.jerryt92.j2agent.service.llm.reasoning.SpringAiReasoningMetadataAdapter;
 import io.github.jerryt92.j2agent.service.llm.tool.ToolEventEmitter;
+import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
 import io.github.jerryt92.j2agent.service.llm.usage.TurnUsageAccumulator;
 import io.github.jerryt92.j2agent.service.llm.usage.TurnUsageContext;
-import io.github.jerryt92.j2agent.service.llm.agent.builtin.SubAgentStreamBridge;
-import io.github.jerryt92.j2agent.service.llm.agent.builtin.universalagent.UniversalAssistantOrchestratorService;
-import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
-import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnLifecycle;
-import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnControlService;
-import io.github.jerryt92.j2agent.service.llm.chat.TurnCancelledException;
-import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
+import io.github.jerryt92.j2agent.service.question.TurnAskQuestionRegistry;
 import io.github.jerryt92.j2agent.utils.UUIDv7Utils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
@@ -51,6 +51,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
 import reactor.core.Exceptions;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -153,7 +154,9 @@ public class ChatService {
                 chatTurnControlService.registerTurn(contextId, agentId, turnId, null);
             }
             AtomicLong lastHeartbeatTouchMs = new AtomicLong(0L);
-            int heartbeatTouchIntervalMs = activeChatTurnProperties.getHeartbeatTouchIntervalSeconds() * 1000;
+            int heartbeatTouchIntervalSeconds = Math.max(1, activeChatTurnProperties.getHeartbeatTouchIntervalSeconds());
+            int heartbeatTouchIntervalMs = heartbeatTouchIntervalSeconds * 1000;
+            AtomicBoolean activeTurnReleased = new AtomicBoolean(false);
             Consumer<AgentUiEventEnvelope> recordingResponseCall = envelope -> {
                 if (isTurnCancelled(turnId)) {
                     turnStepRecorder.record(envelope);
@@ -171,7 +174,6 @@ public class ChatService {
                 }
             };
             chatChatCallback.responseCall = recordingResponseCall;
-            AtomicBoolean activeTurnReleased = new AtomicBoolean(false);
             Runnable releaseActiveTurn = () -> {
                 if (activeTurnReleased.compareAndSet(false, true)) {
                     String conversationId = conversationIdRef.get();
@@ -270,17 +272,14 @@ public class ChatService {
             agentChatMemoryRef.set(aiAgentForConversation.getChatMemory());
             final ChatMemory agentChatMemory = agentChatMemoryRef.get();
             final boolean universalAssistant = UniversalAssistantConstants.isUniversalAssistant(resolvedAgentId);
-            final boolean prePersistUserMessage = universalAssistant
-                    || UniversalAssistantConstants.isKnowledgeQaAssistant(resolvedAgentId);
             final List<String> knowledgeCollections = normalizeKnowledgeCollections(request.getKnowledgeCollections());
             if (UniversalAssistantConstants.isKnowledgeQaAssistant(resolvedAgentId)
                     && knowledgeCollections.isEmpty()) {
                 throw new IllegalArgumentException("Knowledge collections are required.");
             }
-            if (prePersistUserMessage) {
-                ChatTurnLifecycle.persistTurnUserMessage(
-                        agentChatMemory, turnConversationId, limitedUserMessage, finalAttachments);
-            }
+            // 回合开始预落库 user，避免工具等待期间刷新后历史为空
+            ChatTurnLifecycle.persistTurnUserMessage(
+                    agentChatMemory, turnConversationId, limitedUserMessage, finalAttachments);
             AgentRunContext agentRunContext = new AgentRunContext(
                     limitedUserMessage,
                     contextId,
@@ -293,7 +292,7 @@ public class ChatService {
                     knowledgeCollections,
                     toolEventEmitter,
                     false,
-                    prePersistUserMessage);
+                    true);
             AgentRunLogger.info(runLogSnapshot, AgentRunEventType.TURN_START,
                     AgentRunLogger.kv(
                             "userMsgLen", limitedUserMessage == null ? 0 : limitedUserMessage.length(),
@@ -519,19 +518,19 @@ public class ChatService {
                     });
             Disposable disposable = agentStreamSession.stream(agentStreamOptions)
                     .subscribe(parts -> emitAnswerDelta(
-                            chatChatCallback,
-                            contextId,
-                            resolvedAgentId,
-                            turnId,
-                            seq,
-                            stateMachine,
-                            turnLock,
-                            streamedContent,
-                            streamedReasoning,
-                            streamedTextLock,
-                            index,
-                            parts.answerDelta(),
-                            parts.reasoningDelta()),
+                                    chatChatCallback,
+                                    contextId,
+                                    resolvedAgentId,
+                                    turnId,
+                                    seq,
+                                    stateMachine,
+                                    turnLock,
+                                    streamedContent,
+                                    streamedReasoning,
+                                    streamedTextLock,
+                                    index,
+                                    parts.answerDelta(),
+                                    parts.reasoningDelta()),
                             chatChatCallback.errorCall,
                             chatChatCallback.completeCall);
             chatTurnControlService.registerDisposable(turnId, disposable);

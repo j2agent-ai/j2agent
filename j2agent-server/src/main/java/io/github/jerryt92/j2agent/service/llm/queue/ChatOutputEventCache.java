@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.jerryt92.j2agent.config.redis.RedisKeyNamespaces;
 import io.github.jerryt92.j2agent.model.AgentState;
 import io.github.jerryt92.j2agent.model.AgentUiEventEnvelope;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.redisson.api.RBucket;
 import org.redisson.api.RedissonClient;
@@ -22,6 +23,7 @@ import java.util.Objects;
  * 不逐 token 保存事件，也不作为历史权威数据。页面刷新后先读取 snapshot 覆盖气泡，
  * 再继续接收后续 WebSocket 增量。</p>
  */
+@Slf4j
 @Service
 public class ChatOutputEventCache {
     private static final int MAX_STATE_TRAIL_SIZE = 64;
@@ -59,14 +61,17 @@ public class ChatOutputEventCache {
                              String answerContent,
                              String reasoningContent,
                              AgentState state) {
-        if (!properties.isOutputCacheEnabled() || !StringUtils.isNotBlank(turnId)) {
+        if (!StringUtils.isNotBlank(turnId)
+                || !StringUtils.isNotBlank(contextId)
+                || !StringUtils.isNotBlank(agentId)) {
             return;
         }
-        ChatOutputSnapshot current = snapshotBucket(contextId, agentId).get();
+        RBucket<ChatOutputSnapshot> bucket = snapshotBucket(contextId, agentId);
+        ChatOutputSnapshot current = bucket.get();
         List<ChatOutputSnapshot.StateTrailItem> stateTrail = current == null
                 ? new ArrayList<>()
                 : new ArrayList<>(current.getStateTrail() == null ? List.of() : current.getStateTrail());
-        snapshotBucket(contextId, agentId).set(
+        bucket.set(
                 new ChatOutputSnapshot(
                         contextId,
                         agentId,
@@ -83,10 +88,11 @@ public class ChatOutputEventCache {
      * 保存轻量状态轨迹，供刷新后恢复工具调用、编排、取消等 UI 步骤。
      */
     public void saveStateTrailEvent(String contextId, String agentId, AgentUiEventEnvelope event) {
-        if (!properties.isOutputCacheEnabled()
-                || event == null
+        if (event == null
                 || !StringUtils.isNotBlank(event.getTurnId())
-                || event.getState() == null) {
+                || event.getState() == null
+                || !StringUtils.isNotBlank(contextId)
+                || !StringUtils.isNotBlank(agentId)) {
             return;
         }
         RBucket<ChatOutputSnapshot> bucket = snapshotBucket(contextId, agentId);
@@ -107,9 +113,8 @@ public class ChatOutputEventCache {
             trail = new ArrayList<>();
             snapshot.setStateTrail(trail);
         }
-        Object payload = event.getEventType() == io.github.jerryt92.j2agent.model.AgentEventType.MESSAGE
-                ? null
-                : event.getPayload();
+        // MESSAGE/DELTA 正文增量不可回放（会重复追加）；PATCH 携带 srcFile/pendingQuestion，resume 需保留
+        Object payload = shouldRetainTrailPayload(event) ? event.getPayload() : null;
         ChatOutputSnapshot.StateTrailItem item = new ChatOutputSnapshot.StateTrailItem(
                 event.getState(),
                 event.getTransition(),
@@ -133,10 +138,21 @@ public class ChatOutputEventCache {
     }
 
     /**
-     * 读取运行中 snapshot；output cache 关闭时固定返回 null。
+     * 判断 stateTrail 是否保留事件 payload。
+     * <p>非 MESSAGE 一律保留；MESSAGE 仅 PATCH（来源/提问补丁）保留，DELTA 正文置空避免 resume 重复追加。</p>
+     */
+    private static boolean shouldRetainTrailPayload(AgentUiEventEnvelope event) {
+        if (event.getEventType() != io.github.jerryt92.j2agent.model.AgentEventType.MESSAGE) {
+            return true;
+        }
+        return event.getPhase() == io.github.jerryt92.j2agent.model.AgentEventPhase.PATCH;
+    }
+
+    /**
+     * 读取运行中 snapshot。
      */
     public ChatOutputSnapshot getSnapshot(String contextId, String agentId) {
-        if (!properties.isOutputCacheEnabled()) {
+        if (!StringUtils.isNotBlank(contextId) || !StringUtils.isNotBlank(agentId)) {
             return null;
         }
         return snapshotBucket(contextId, agentId).get();

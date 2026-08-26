@@ -38,12 +38,8 @@ public class ChatQueueProperties {
     private int queuedTaskTtlSeconds = 300;
 
     /**
-     * 是否缓存运行中 output 快照，用于刷新/断线后的 resume 补发。
-     */
-    private boolean outputCacheEnabled = false;
-
-    /**
      * 运行中 output 快照缓存 TTL；回答完成后仍会主动删除，TTL 只是兜底。
+     * snapshot 是重连恢复的默认行为，不提供开关。
      */
     private int outputCacheTtlSeconds = 300;
 }
