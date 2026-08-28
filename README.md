@@ -74,7 +74,7 @@ docker compose -f docker/docker-compose.yml up -d --build
 - `COMPOSE_PROJECT_NAME`：容器前缀（默认 `j2agent`）
 - `J2AGENT_PORT`：应用容器端口（默认 `30111`，不映射到宿主机）
 - `J2AGENT_NGINX_PORT`：Nginx HTTPS 宿主机端口（默认 `30112`）
-- `J2AGENT_HTTP_REDIRECT_PORT`：Nginx HTTP 宿主机端口（默认 `30113`）
+- `J2AGENT_HTTP_PORT`：Nginx HTTP 宿主机端口（默认 `30113`）
 - `J2AGENT_ENFORCE_HTTPS`：`true` 时 HTTP 返回 308 到 HTTPS；`false`（默认）时 HTTP 直接反代应用
 - `J2AGENT_HTTPS_CERT_FILE` / `J2AGENT_HTTPS_KEY_FILE`：PEM 证书与私钥文件名，兼容 nginx 常用证书格式；宿主机目录为 `${J2AGENT_VOLUMES_PATH}/volumes/nginx/certs`
 - `TAG`：镜像标签

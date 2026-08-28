@@ -53,7 +53,7 @@ Nginx 每次启动前都会将 `docker/nginx` 中的默认模板与启动脚本�
 HTTP 端口始终由 Nginx 监听；通过 `.env` 的开关决定直接 HTTP 访问或重定向到 HTTPS：
 
 ```properties
-J2AGENT_HTTP_REDIRECT_PORT=30110
+J2AGENT_HTTP_PORT=30110
 J2AGENT_ENFORCE_HTTPS=true
 ```
 

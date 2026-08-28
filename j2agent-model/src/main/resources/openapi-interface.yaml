@@ -3,6 +3,7 @@ info:
   title: ai operate - OpenAPI 3.0
   description: |-
     This is ai operate OpenAPI.
+    Authentication uses `Authorization: Bearer <jwt>` or `Authorization: Bearer apikey-<keyId>.<secret>`. Browser WebSocket clients may alternatively send either credential through the `authorization` query parameter.
   version: 1.0.1
 tags:
   - name: HealthCheck
@@ -18,6 +19,7 @@ tags:
   - name: ProviderConfig
   - name: MCP
   - name: User
+  - name: ApiKey
   - name: Register
   - name: ResetPassword
   - name: Audit
@@ -223,6 +225,24 @@ paths:
       responses:
         '200':
           description: OK
+  /v1/rest/j2agent/audit-users:
+    get:
+      tags: [ User ]
+      summary: 按审计数据类型获取用户列表（包含已删除用户）
+      operationId: getAuditUsers
+      parameters:
+        - name: source
+          in: query
+          required: true
+          description: 审计数据来源，token 或 context
+          schema: { type: string, enum: [ token, context ] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: './openapi-model.yaml#/components/schemas/UserListDto'
   /v1/rest/j2agent/users/role:
     put:
       tags: [ User ]
@@ -251,6 +271,63 @@ paths:
       responses:
         '200':
           description: OK
+  /v1/rest/j2agent/api-keys:
+    get:
+      tags: [ ApiKey ]
+      summary: 获取 API Key 列表
+      operationId: getApiKeys
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: './openapi-model.yaml#/components/schemas/ApiKeyDto' }
+    post:
+      tags: [ ApiKey ]
+      summary: 创建 API Key 和专用用户
+      operationId: createApiKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './openapi-model.yaml#/components/schemas/ApiKeyCreateRequestDto' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: './openapi-model.yaml#/components/schemas/ApiKeyCreateResultDto' }
+  /v1/rest/j2agent/api-keys/{id}/role:
+    put:
+      tags: [ ApiKey ]
+      summary: 修改 API 专用用户角色
+      operationId: updateApiKeyRole
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './openapi-model.yaml#/components/schemas/ApiKeyRoleUpdateRequestDto' }
+      responses:
+        '200': { description: OK }
+  /v1/rest/j2agent/api-keys/{id}:
+    delete:
+      tags: [ ApiKey ]
+      summary: 删除 API Key 和专用用户
+      operationId: deleteApiKey
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
   /v1/auth/j2agent/captcha/slide:
     get:
       operationId: getSlideCaptcha
@@ -1473,6 +1550,34 @@ paths:
             application/json:
               schema:
                 $ref: './openapi-model.yaml#/components/schemas/AuditTokenRecordListDto'
+    delete:
+      tags: [ Audit ]
+      operationId: deleteAuditTokenRecords
+      summary: 批量删除指定 Token 用量审计记录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './openapi-model.yaml#/components/schemas/AuditTokenRecordDeleteRequestDto'
+      responses:
+        '200':
+          description: OK
+
+  /v1/rest/j2agent/audit/token/users:
+    delete:
+      tags: [ Audit ]
+      operationId: deleteAuditTokenUsers
+      summary: 删除指定用户的全部 Token 用量审计记录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './openapi-model.yaml#/components/schemas/AuditTokenUserDeleteRequestDto'
+      responses:
+        '200':
+          description: OK
 
   /v1/rest/j2agent/audit/contexts:
     get:
@@ -1511,6 +1616,19 @@ paths:
             application/json:
               schema:
                 $ref: './openapi-model.yaml#/components/schemas/AuditContextListDto'
+    delete:
+      tags: [ Audit ]
+      operationId: deleteAuditContexts
+      summary: 批量删除指定聊天会话审计数据
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './openapi-model.yaml#/components/schemas/AuditContextDeleteRequestDto'
+      responses:
+        '200':
+          description: OK
 
   /v1/rest/j2agent/audit/context:
     get:

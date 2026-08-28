@@ -2,6 +2,8 @@ package io.github.jerryt92.j2agent.service.security;
 
 import io.github.jerryt92.j2agent.constants.ErrorConstants;
 import io.github.jerryt92.j2agent.mapper.mgb.UserPoMapper;
+import io.github.jerryt92.j2agent.mapper.ext.AuditChatContextExtMapper;
+import io.github.jerryt92.j2agent.mapper.ext.LlmUsageRecordMapper;
 import io.github.jerryt92.j2agent.model.RegisterRequestDto;
 import io.github.jerryt92.j2agent.model.ResetPasswordRequestDto;
 import io.github.jerryt92.j2agent.model.UserCreateRequestDto;
@@ -22,7 +24,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.security.SecureRandom;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -41,25 +46,84 @@ public class UserService {
     private final LoginService loginService;
     private final EmailVerificationService emailVerificationService;
     private final EmailRegisterService emailRegisterService;
+    private final LlmUsageRecordMapper llmUsageRecordMapper;
+    private final AuditChatContextExtMapper auditChatContextExtMapper;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public UserService(UserPoMapper userPoMapper,
                        LoginService loginService,
                        EmailVerificationService emailVerificationService,
-                       EmailRegisterService emailRegisterService) {
+                       EmailRegisterService emailRegisterService,
+                       LlmUsageRecordMapper llmUsageRecordMapper,
+                       AuditChatContextExtMapper auditChatContextExtMapper) {
         this.userPoMapper = userPoMapper;
         this.loginService = loginService;
         this.emailVerificationService = emailVerificationService;
         this.emailRegisterService = emailRegisterService;
+        this.llmUsageRecordMapper = llmUsageRecordMapper;
+        this.auditChatContextExtMapper = auditChatContextExtMapper;
     }
 
     /**
      * 查询所有用户。
      */
     public UserListDto listUsers() {
+        return listUsers(false);
+    }
+
+    /**
+     * 审计筛选按面板数据源独立返回用户。不得把 Token 与聊天会话用户并集返回，
+     * 否则会在另一面板出现没有任何结果的无效筛选项。
+     */
+    public UserListDto listAuditUsers(String source) {
+        Set<String> auditUserIds = loadAuditUserIds(source);
+        List<UserDto> users = new ArrayList<>();
+        Set<String> existingIds = new LinkedHashSet<>();
+        for (UserDto user : listUsers(true).getData()) {
+            if (user != null && !isBlank(user.getUserId())
+                    && auditUserIds.contains(user.getUserId().trim())) {
+                users.add(user);
+                existingIds.add(user.getUserId().trim());
+            }
+        }
+        auditUserIds.stream()
+                .filter(id -> !existingIds.contains(id))
+                .sorted()
+                .forEach(id -> {
+                    UserDto deleted = new UserDto();
+                    deleted.setUserId(id);
+                    deleted.setRole(UserRoleEnum.USER.getValue());
+                    deleted.setDeleted(true);
+                    users.add(deleted);
+                });
+        UserListDto dto = new UserListDto();
+        dto.setData(users);
+        return dto;
+    }
+
+    private Set<String> loadAuditUserIds(String source) {
+        List<String> rawIds;
+        if ("token".equals(source)) {
+            rawIds = llmUsageRecordMapper.selectDistinctUserIds();
+        } else if ("context".equals(source)) {
+            rawIds = auditChatContextExtMapper.selectDistinctUserIds();
+        } else {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "audit user source must be token or context");
+        }
+        Set<String> ids = new LinkedHashSet<>();
+        for (String rawId : rawIds) {
+            if (!isBlank(rawId)) {
+                ids.add(rawId.trim());
+            }
+        }
+        return ids;
+    }
+
+    private UserListDto listUsers(boolean includeApiUsers) {
         UserPoExample example = new UserPoExample();
         example.setOrderByClause("create_time DESC, username ASC");
         List<UserDto> users = userPoMapper.selectByExample(example).stream()
+                .filter(user -> includeApiUsers || !"API".equals(user.getAccountType()))
                 .map(this::toDto)
                 .toList();
         UserListDto dto = new UserListDto();
@@ -94,6 +158,7 @@ public class UserService {
     public void deleteUser(String userId) {
         requireAdmin();
         UserPo user = requireUser(userId);
+        ensureNotApiUser(user);
         ensureMutableUser(user);
         userPoMapper.deleteByPrimaryKey(userId);
         loginService.invalidateUserLogin(userId);
@@ -108,6 +173,7 @@ public class UserService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "userId is required");
         }
         UserPo user = requireUser(request.getUserId());
+        ensureNotApiUser(user);
         ensureMutableUser(user);
         user.setRole(normalizeRole(request.getRole()));
         userPoMapper.updateByPrimaryKeySelective(user);
@@ -211,6 +277,7 @@ public class UserService {
         UserContextBo session = requireSession();
         String targetUserId = isBlank(request.getUserId()) ? session.getUserId() : request.getUserId();
         UserPo user = requireUser(targetUserId);
+        ensureNotApiUser(user);
 
         if (!session.isAdmin()) {
             if (!session.getUserId().equals(targetUserId)) {
@@ -313,6 +380,12 @@ public class UserService {
         }
     }
 
+    private void ensureNotApiUser(UserPo user) {
+        if ("API".equals(user.getAccountType())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "api-only users are managed by api key management");
+        }
+    }
+
     private int normalizeRole(Integer role) {
         int value = role == null ? UserRoleEnum.USER.getValue() : role;
         try {
@@ -330,6 +403,7 @@ public class UserService {
         dto.setRole(user.getRole());
         dto.setCreateTime(user.getCreateTime());
         dto.setEmail(user.getEmail());
+        dto.setDeleted(false);
         return dto;
     }
 

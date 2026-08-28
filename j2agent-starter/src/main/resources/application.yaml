@@ -119,6 +119,11 @@ j2agent:
     sync:
       retention-days: 7
       cleanup-cron: "0 30 2 * * *"
+  # CORS 全部由环境变量注入，勿在此写死 Origin
+  cors:
+    enabled: ${J2AGENT_CORS_ENABLED:true}
+    allowed-origins: ${J2AGENT_CORS_ALLOWED_ORIGINS:}
+    max-age-seconds: ${J2AGENT_CORS_MAX_AGE_SECONDS:3600}
   security:
     jwt:
       # 与外部系统（com.nms.jwt / platsvc-security）联调时 algorithm、secret、kmac-output-length-bytes 必须一致

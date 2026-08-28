@@ -60,7 +60,7 @@ Configurable options (`docker/.env`, see `docker/.env.example`):
 - `COMPOSE_PROJECT_NAME`: Container prefix (default `j2agent`)
 - `J2AGENT_PORT`: Application container port (default `30111`; not published to the host)
 - `J2AGENT_NGINX_PORT`: Nginx HTTPS host port (default `30112`)
-- `J2AGENT_HTTP_REDIRECT_PORT`: Nginx HTTP host port (default `30113`)
+- `J2AGENT_HTTP_PORT`: Nginx HTTP host port (default `30113`)
 - `J2AGENT_ENFORCE_HTTPS`: `true` returns a 308 redirect from HTTP to HTTPS; `false` (default) proxies HTTP directly
 - `J2AGENT_HTTPS_CERT_FILE` / `J2AGENT_HTTPS_KEY_FILE`: PEM certificate and private key file names in `${J2AGENT_VOLUMES_PATH}/volumes/nginx/certs`
 - `TAG`: Image tag

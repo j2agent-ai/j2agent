@@ -36,6 +36,7 @@ public class LoginService {
     private final JwtService jwtService;
     private final UserLoginContextCache userLoginContextCache;
     private final UserService userService;
+    private final ApiAccessKeyService apiAccessKeyService;
     private final ThreadLocal<UserContextBo> sessionThreadLocal = new ThreadLocal<>();
 
     public LoginService(
@@ -43,12 +44,14 @@ public class LoginService {
             CaptchaService captchaService,
             JwtService jwtService,
             UserLoginContextCache userLoginContextCache,
-            @Lazy UserService userService) {
+            @Lazy UserService userService,
+            ApiAccessKeyService apiAccessKeyService) {
         this.userPoMapper = userPoMapper;
         this.captchaService = captchaService;
         this.jwtService = jwtService;
         this.userLoginContextCache = userLoginContextCache;
         this.userService = userService;
+        this.apiAccessKeyService = apiAccessKeyService;
     }
 
     public AuthResultDto login(String username, String password, String captchaCode, String hash) {
@@ -62,6 +65,9 @@ public class LoginService {
             return null;
         }
         UserPo userPo = userPos.get(0);
+        if (!apiAccessKeyService.isPasswordLoginAllowed(userPo.getId())) {
+            return null;
+        }
         if (!UserUtil.verifyPassword(userPo.getId(), password, userPo.getPasswordHash())) {
             return null;
         }
@@ -69,7 +75,18 @@ public class LoginService {
     }
 
     public boolean resolveRequest(HttpServletRequest request) {
-        boolean resolved = resolveToken(extractToken(request));
+        boolean resolved;
+        String authorization = request == null ? null : request.getHeader("Authorization");
+        if (authorization != null && authorization.startsWith(BEARER_PREFIX)) {
+            String credential = authorization.substring(BEARER_PREFIX.length()).trim();
+            resolved = credential.startsWith(ApiAccessKeyService.KEY_PREFIX)
+                    ? resolveApiKey(credential) : resolveToken(credential);
+        } else {
+            // WebSocket 浏览器客户端无法设置 Authorization 请求头，保留 authorization 查询参数传递 JWT。
+            String credential = request == null ? null : request.getParameter("authorization");
+            resolved = credential != null && (credential.startsWith(ApiAccessKeyService.KEY_PREFIX)
+                    ? resolveApiKey(credential) : resolveToken(credential));
+        }
         if (resolved) {
             UserContextBo userContextBo = getSession();
             if (userContextBo != null) {
@@ -93,6 +110,13 @@ public class LoginService {
         } catch (JWTVerificationException e) {
             return false;
         }
+    }
+
+    private boolean resolveApiKey(String rawKey) {
+        UserContextBo userContextBo = apiAccessKeyService.resolve(rawKey);
+        if (userContextBo == null) return false;
+        bindSession(userContextBo);
+        return true;
     }
 
     public UserContextBo getSession() {
@@ -207,6 +231,9 @@ public class LoginService {
             } catch (ResponseStatusException ex) {
                 return null;
             }
+        }
+        if (apiAccessKeyService.isApiUser(userPo.getId())) {
+            return null;
         }
         if (userPo == null) {
             return null;

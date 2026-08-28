@@ -9,6 +9,10 @@ public class UserContextBo {
     private String sessionId;
     private String userId;
     private String username;
+    /** JWT 或 API_KEY，用于审计和避免 logout 删除长期凭证。 */
+    private String credentialType = "JWT";
+    /** API Key 的内部 ID；JWT 会话为空。 */
+    private String apiKeyId;
     /** 当前会话语言标识（如 zh_CN / en_US）。 */
     private String language;
     private UserRoleEnum role;

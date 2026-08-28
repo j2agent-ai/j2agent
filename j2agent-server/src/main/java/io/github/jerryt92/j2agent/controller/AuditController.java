@@ -2,8 +2,11 @@ package io.github.jerryt92.j2agent.controller;
 
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
 import io.github.jerryt92.j2agent.model.AuditContextDetailDto;
+import io.github.jerryt92.j2agent.model.AuditContextDeleteRequestDto;
 import io.github.jerryt92.j2agent.model.AuditContextListDto;
 import io.github.jerryt92.j2agent.model.AuditTokenRecordListDto;
+import io.github.jerryt92.j2agent.model.AuditTokenRecordDeleteRequestDto;
+import io.github.jerryt92.j2agent.model.AuditTokenUserDeleteRequestDto;
 import io.github.jerryt92.j2agent.model.AuditTokenSummaryDto;
 import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.server.api.AuditApi;
@@ -60,5 +63,23 @@ public class AuditController implements AuditApi {
     @Override
     public ResponseEntity<AuditContextDetailDto> getAuditContext(String contextId, String agentId) {
         return ResponseEntity.ok(auditService.getContext(contextId, agentId));
+    }
+
+    @Override
+    public ResponseEntity<Void> deleteAuditTokenRecords(AuditTokenRecordDeleteRequestDto request) {
+        auditService.deleteTokenRecords(request);
+        return ResponseEntity.ok().build();
+    }
+
+    @Override
+    public ResponseEntity<Void> deleteAuditTokenUsers(AuditTokenUserDeleteRequestDto request) {
+        auditService.deleteTokenUsers(request);
+        return ResponseEntity.ok().build();
+    }
+
+    @Override
+    public ResponseEntity<Void> deleteAuditContexts(AuditContextDeleteRequestDto request) {
+        auditService.deleteContexts(request);
+        return ResponseEntity.ok().build();
     }
 }

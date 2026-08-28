@@ -6,9 +6,13 @@ import io.github.jerryt92.j2agent.mapper.mgb.ChatContextItemMapper;
 import io.github.jerryt92.j2agent.mapper.mgb.ChatContextRecordMapper;
 import io.github.jerryt92.j2agent.mapper.mgb.UserPoMapper;
 import io.github.jerryt92.j2agent.model.AuditContextDetailDto;
+import io.github.jerryt92.j2agent.model.AuditContextDeleteItemDto;
+import io.github.jerryt92.j2agent.model.AuditContextDeleteRequestDto;
 import io.github.jerryt92.j2agent.model.AuditContextItemDto;
 import io.github.jerryt92.j2agent.model.AuditContextListDto;
 import io.github.jerryt92.j2agent.model.AuditTokenRecordDto;
+import io.github.jerryt92.j2agent.model.AuditTokenRecordDeleteRequestDto;
+import io.github.jerryt92.j2agent.model.AuditTokenUserDeleteRequestDto;
 import io.github.jerryt92.j2agent.model.AuditTokenRecordListDto;
 import io.github.jerryt92.j2agent.model.AuditTokenSummaryDto;
 import io.github.jerryt92.j2agent.model.AuditTokenSummaryItemDto;
@@ -19,13 +23,19 @@ import io.github.jerryt92.j2agent.model.po.LlmUsageSummaryRow;
 import io.github.jerryt92.j2agent.model.po.mgb.ChatContextItem;
 import io.github.jerryt92.j2agent.model.po.mgb.ChatContextItemExample;
 import io.github.jerryt92.j2agent.model.po.mgb.ChatContextRecord;
+import io.github.jerryt92.j2agent.model.po.mgb.ChatContextRecordExample;
 import io.github.jerryt92.j2agent.model.po.mgb.ChatContextRecordKey;
 import io.github.jerryt92.j2agent.model.po.mgb.UserPo;
 import io.github.jerryt92.j2agent.model.po.mgb.UserPoExample;
 import io.github.jerryt92.j2agent.service.file.oss.ChatAttachmentUrlResolver;
+import io.github.jerryt92.j2agent.service.file.oss.ChatAttachmentCleanupService;
+import io.github.jerryt92.j2agent.service.llm.ActiveChatTurnRegistry;
+import io.github.jerryt92.j2agent.service.llm.memory.ConversationIdCodec;
+import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -47,20 +57,29 @@ public class AuditService {
     private final ChatContextItemMapper chatContextItemMapper;
     private final AuditChatContextExtMapper auditChatContextExtMapper;
     private final UserPoMapper userPoMapper;
+    private final ChatMemoryRepository chatMemoryRepository;
+    private final ActiveChatTurnRegistry activeChatTurnRegistry;
 
     @Autowired(required = false)
     private ChatAttachmentUrlResolver chatAttachmentUrlResolver;
+
+    @Autowired(required = false)
+    private ChatAttachmentCleanupService attachmentCleanupService;
 
     public AuditService(LlmUsageRecordMapper llmUsageRecordMapper,
                         ChatContextRecordMapper chatContextRecordMapper,
                         ChatContextItemMapper chatContextItemMapper,
                         AuditChatContextExtMapper auditChatContextExtMapper,
-                        UserPoMapper userPoMapper) {
+                        UserPoMapper userPoMapper,
+                        ChatMemoryRepository chatMemoryRepository,
+                        ActiveChatTurnRegistry activeChatTurnRegistry) {
         this.llmUsageRecordMapper = llmUsageRecordMapper;
         this.chatContextRecordMapper = chatContextRecordMapper;
         this.chatContextItemMapper = chatContextItemMapper;
         this.auditChatContextExtMapper = auditChatContextExtMapper;
         this.userPoMapper = userPoMapper;
+        this.chatMemoryRepository = chatMemoryRepository;
+        this.activeChatTurnRegistry = activeChatTurnRegistry;
     }
 
     /** Token 用量按用户聚合总览。 */
@@ -205,6 +224,57 @@ public class AuditService {
         return dto;
     }
 
+    /** 删除管理员明确选择的 Token 用量审计记录。 */
+    @Transactional(rollbackFor = Throwable.class)
+    public void deleteTokenRecords(AuditTokenRecordDeleteRequestDto request) {
+        List<String> ids = normalizeIds(request == null ? null : request.getIds());
+        if (llmUsageRecordMapper.countByIds(ids) != ids.size()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "audit token record not found");
+        }
+        llmUsageRecordMapper.deleteByIds(ids);
+    }
+
+    /** 删除总览用户的全部 Token 明细，不受当前总览筛选条件限制。 */
+    @Transactional(rollbackFor = Throwable.class)
+    public void deleteTokenUsers(AuditTokenUserDeleteRequestDto request) {
+        List<String> userIds = normalizeIds(request == null ? null : request.getUserIds());
+        if (llmUsageRecordMapper.countByUserIds(userIds) < userIds.size()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "audit token user not found");
+        }
+        llmUsageRecordMapper.deleteByUserIds(userIds);
+    }
+
+    /**
+     * 删除管理员明确选择的会话。预先校验所有主键和运行状态，避免产生部分删除。
+     */
+    @Transactional(rollbackFor = Throwable.class)
+    public void deleteContexts(AuditContextDeleteRequestDto request) {
+        List<AuditContextDeleteItemDto> items = normalizeContextItems(request == null ? null : request.getItems());
+        List<ChatContextRecord> records = new ArrayList<>(items.size());
+        for (AuditContextDeleteItemDto item : items) {
+            ChatContextRecordKey key = new ChatContextRecordKey();
+            key.setContextId(item.getContextId());
+            key.setAgentId(item.getAgentId());
+            ChatContextRecord record = chatContextRecordMapper.selectByPrimaryKey(key);
+            if (record == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "audit context not found");
+            }
+            if (activeChatTurnRegistry.isActive(item.getContextId(), item.getAgentId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "audit context is in progress");
+            }
+            records.add(record);
+        }
+        for (ChatContextRecord record : records) {
+            String ownerId = blankToNull(record.getUserId());
+            String conversationUserId = ownerId == null ? "anonymous" : ownerId;
+            chatMemoryRepository.deleteByConversationId(ConversationIdCodec.format(
+                    conversationUserId, record.getContextId(), record.getAgentId()));
+            if (ownerId != null && !hasContextRecords(record.getContextId()) && attachmentCleanupService != null) {
+                attachmentCleanupService.deleteByChatContextPrefix(ownerId, record.getContextId());
+            }
+        }
+    }
+
     private AuditContextItemDto toContextItem(ChatContextRecord record, String username) {
         return new AuditContextItemDto()
                 .contextId(record.getContextId())
@@ -242,9 +312,49 @@ public class AuditService {
         return map;
     }
 
+    private boolean hasContextRecords(String contextId) {
+        ChatContextRecordExample example = new ChatContextRecordExample();
+        example.createCriteria().andContextIdEqualTo(contextId);
+        return chatContextRecordMapper.countByExample(example) > 0;
+    }
+
+    private static List<String> normalizeIds(List<String> rawIds) {
+        if (rawIds == null || rawIds.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "audit record ids are required");
+        }
+        List<String> ids = new ArrayList<>(rawIds.size());
+        Set<String> unique = new LinkedHashSet<>();
+        for (String rawId : rawIds) {
+            String id = blankToNull(rawId);
+            if (id == null || !unique.add(id)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "audit record ids must be unique and non-blank");
+            }
+            ids.add(id);
+        }
+        return ids;
+    }
+
+    private static List<AuditContextDeleteItemDto> normalizeContextItems(List<AuditContextDeleteItemDto> rawItems) {
+        if (rawItems == null || rawItems.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "audit contexts are required");
+        }
+        List<AuditContextDeleteItemDto> items = new ArrayList<>(rawItems.size());
+        Set<String> unique = new LinkedHashSet<>();
+        for (AuditContextDeleteItemDto rawItem : rawItems) {
+            String contextId = rawItem == null ? null : blankToNull(rawItem.getContextId());
+            String agentId = rawItem == null ? null : blankToNull(rawItem.getAgentId());
+            if (contextId == null || agentId == null || !unique.add(contextId + '\u0000' + agentId)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "audit contexts must have unique, non-blank contextId and agentId");
+            }
+            items.add(new AuditContextDeleteItemDto().contextId(contextId).agentId(agentId));
+        }
+        return items;
+    }
+
     private AuditTokenSummaryItemDto toSummaryItem(LlmUsageSummaryRow row) {
         return new AuditTokenSummaryItemDto()
-                .userId(row.getUserId())
+                .userId(blankToNull(row.getUserId()))
                 .username(row.getUsername())
                 .callCount(nz(row.getCallCount()))
                 .inputTokens(nz(row.getInputTokens()))
@@ -255,7 +365,7 @@ public class AuditService {
     private AuditTokenRecordDto toRecordItem(LlmUsageRecordQueryRow row) {
         return new AuditTokenRecordDto()
                 .id(row.getId())
-                .userId(row.getUserId())
+                .userId(blankToNull(row.getUserId()))
                 .username(row.getUsername())
                 .contextId(row.getContextId())
                 .agentId(row.getAgentId())

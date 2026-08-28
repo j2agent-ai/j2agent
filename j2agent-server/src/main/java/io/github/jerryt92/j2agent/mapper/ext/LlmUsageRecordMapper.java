@@ -57,4 +57,15 @@ public interface LlmUsageRecordMapper {
                                                @Param("toTime") Long toTime,
                                                @Param("offset") int offset,
                                                @Param("limit") int limit);
+
+    /** 审计历史中仍有记录的用户 ID，用于补齐已删除用户筛选项。 */
+    List<String> selectDistinctUserIds();
+
+    int countByIds(@Param("ids") List<String> ids);
+
+    int deleteByIds(@Param("ids") List<String> ids);
+
+    int countByUserIds(@Param("userIds") List<String> userIds);
+
+    int deleteByUserIds(@Param("userIds") List<String> userIds);
 }

@@ -43,4 +43,9 @@
     limit #{limit} offset #{offset}
   </select>
 
+  <select id="selectDistinctUserIds" resultType="string">
+    select distinct user_id from chat_context_record
+    where user_id is not null and trim(user_id) != ''
+  </select>
+
 </mapper>

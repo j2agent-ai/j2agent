@@ -74,19 +74,23 @@ public class ChatContextService {
     /**
      * 判断用户是否可使用该 contextId：无记录视为新会话；有记录则须存在 user_id 匹配的行。
      * 无 userId 时：仅允许尚不存在的新 contextId，已有记录一律拒绝（防匿名越权读）。
+     * <p>
+     * API Key 会话的 userId 可能因 {@code app_user.id char(32)} 带尾部空格，而落库经
+     * {@code ChatContextRecord#setUserId} 已 trim，比较前必须统一去掉空白。
      */
     public boolean userOwnsContext(String contextId, String userId) {
         ChatContextRecordExample anyExample = new ChatContextRecordExample();
         anyExample.createCriteria().andContextIdEqualTo(contextId);
         boolean exists = chatContextRecordMapper.countByExample(anyExample) > 0;
-        if (!StringUtils.hasText(userId)) {
+        String uid = StringUtils.hasText(userId) ? userId.trim() : null;
+        if (!StringUtils.hasText(uid)) {
             return !exists;
         }
         if (!exists) {
             return true;
         }
         ChatContextRecordExample ownedExample = new ChatContextRecordExample();
-        ownedExample.createCriteria().andContextIdEqualTo(contextId).andUserIdEqualTo(userId);
+        ownedExample.createCriteria().andContextIdEqualTo(contextId).andUserIdEqualTo(uid);
         return chatContextRecordMapper.countByExample(ownedExample) > 0;
     }
 
@@ -115,10 +119,11 @@ public class ChatContextService {
         if (chatContextRecord == null) {
             return null;
         }
-        if (!userId.equals(chatContextRecord.getUserId())) {
+        String recordUserId = chatContextRecord.getUserId() == null ? null : chatContextRecord.getUserId().trim();
+        String requestUserId = userId.trim();
+        if (!requestUserId.equals(recordUserId)) {
             return null;
         }
-        String recordUserId = chatContextRecord.getUserId();
         String conversationId = ConversationIdCodec.format(
                 recordUserId == null ? "anonymous" : recordUserId,
                 contextId,

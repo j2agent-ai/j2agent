@@ -28,4 +28,7 @@ public interface AuditChatContextExtMapper {
                                            @Param("toTime") Long toTime,
                                            @Param("offset") int offset,
                                            @Param("limit") int limit);
+
+    /** 审计历史中仍有会话的用户 ID，用于补齐已删除用户筛选项。 */
+    List<String> selectDistinctUserIds();
 }

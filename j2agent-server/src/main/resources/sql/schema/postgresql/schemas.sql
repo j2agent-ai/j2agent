@@ -84,8 +84,25 @@ CREATE TABLE app_user
     create_time   bigint,
     role          int,
     email         varchar(128) DEFAULT NULL,
+    account_type  varchar(16)  NOT NULL DEFAULT 'HUMAN',
+    password_login_enabled boolean NOT NULL DEFAULT true,
     PRIMARY KEY (id),
     CONSTRAINT uq_user_email UNIQUE (email)
+);
+
+CREATE TABLE api_access_key
+(
+    id              char(32)     NOT NULL,
+    user_id         char(32)     NOT NULL,
+    key_name        varchar(128) NOT NULL,
+    key_prefix      varchar(80)  NOT NULL,
+    secret_hash     char(64)     NOT NULL,
+    create_time     bigint       NOT NULL,
+    last_used_time  bigint       DEFAULT NULL,
+    PRIMARY KEY (id),
+    CONSTRAINT uq_api_access_key_user UNIQUE (user_id),
+    CONSTRAINT uq_api_access_key_prefix UNIQUE (key_prefix),
+    CONSTRAINT fk_api_access_key_user FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE
 );
 
 DROP TABLE IF EXISTS ai_properties;
