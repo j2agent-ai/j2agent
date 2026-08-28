@@ -228,6 +228,9 @@ components:
         email:
           type: string
           description: 邮箱
+        deleted:
+          type: boolean
+          description: 是否为从审计历史反查出的已删除用户
     UserListDto:
       type: object
       properties:
@@ -267,6 +270,34 @@ components:
           type: string
           format: password
           description: 新密码
+    ApiKeyCreateRequestDto:
+      type: object
+      required: [keyName, username]
+      properties:
+        keyName: { type: string, description: API Key 显示名称 }
+        username: { type: string, description: 新建 API 专用用户名 }
+        role: { type: integer, description: 用户角色，1-管理员，2-知识库管理员，3-普通用户 }
+    ApiKeyRoleUpdateRequestDto:
+      type: object
+      required: [role]
+      properties:
+        role: { type: integer, description: 用户角色，1-管理员，2-知识库管理员，3-普通用户 }
+    ApiKeyDto:
+      type: object
+      properties:
+        id: { type: string }
+        keyName: { type: string }
+        userId: { type: string }
+        username: { type: string }
+        role: { type: integer }
+        maskedKey: { type: string, description: 脱敏后的 API Key }
+        createTime: { type: integer, format: int64 }
+        lastUsedTime: { type: integer, format: int64 }
+    ApiKeyCreateResultDto:
+      type: object
+      properties:
+        key: { $ref: '#/components/schemas/ApiKeyDto' }
+        apiKey: { type: string, description: 仅创建时返回一次的完整 API Key }
     RegisterEnabledDto:
       type: object
       properties:
@@ -1280,6 +1311,41 @@ components:
         total:
           type: integer
           format: int64
+
+    AuditTokenRecordDeleteRequestDto:
+      type: object
+      required: [ ids ]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          items: { type: string }
+
+    AuditTokenUserDeleteRequestDto:
+      type: object
+      required: [ userIds ]
+      properties:
+        userIds:
+          type: array
+          minItems: 1
+          items: { type: string }
+
+    AuditContextDeleteItemDto:
+      type: object
+      required: [ contextId, agentId ]
+      properties:
+        contextId: { type: string }
+        agentId: { type: string }
+
+    AuditContextDeleteRequestDto:
+      type: object
+      required: [ items ]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/AuditContextDeleteItemDto'
 
     # 审计：聊天会话列表（带 total）
     AuditContextListDto:

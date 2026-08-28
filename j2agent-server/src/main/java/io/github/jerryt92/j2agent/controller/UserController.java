@@ -32,6 +32,13 @@ public class UserController implements UserApi {
         return ResponseEntity.ok(userService.listUsers());
     }
 
+    /** 审计界面使用；按 Token / 聊天记录独立返回有对应历史数据的用户。 */
+    @Override
+    @RequiredRole(UserRoleEnum.ADMIN)
+    public ResponseEntity<UserListDto> getAuditUsers(String source) {
+        return ResponseEntity.ok(userService.listAuditUsers(source));
+    }
+
     /**
      * 创建用户。
      */

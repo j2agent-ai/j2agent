@@ -44,6 +44,36 @@ class LlmUsageRecorderTest {
     }
 
     @Test
+    void shouldTrimPaddedUserIdFromTurnContext() {
+        LlmUsageRecordMapper usageMapper = mock(LlmUsageRecordMapper.class);
+        LlmUsageRecorder recorder = new LlmUsageRecorder(usageMapper);
+        String paddedUserId = "apiUserId          ";
+        TurnUsageAccumulator.bind(new TurnUsageContext("ctx1", "agent1", "turn1", CONVERSATION_ID, paddedUserId));
+
+        recorder.record(CONVERSATION_ID, "CHAT", config(), available(100));
+
+        ArgumentCaptor<LlmUsageRecordPo> captor = ArgumentCaptor.forClass(LlmUsageRecordPo.class);
+        verify(usageMapper).insert(captor.capture());
+        assertEquals("apiUserId", captor.getValue().getUserId());
+    }
+
+    @Test
+    void shouldTrimPaddedUserIdParsedFromConversationId() {
+        LlmUsageRecordMapper usageMapper = mock(LlmUsageRecordMapper.class);
+        LlmUsageRecorder recorder = new LlmUsageRecorder(usageMapper);
+        String conversationId = "apiUserId          :ctx1:agent1";
+
+        recorder.record(conversationId, "SYNC", config(), available(50));
+
+        ArgumentCaptor<LlmUsageRecordPo> captor = ArgumentCaptor.forClass(LlmUsageRecordPo.class);
+        verify(usageMapper).insert(captor.capture());
+        LlmUsageRecordPo row = captor.getValue();
+        assertEquals("apiUserId", row.getUserId());
+        assertEquals("ctx1", row.getContextId());
+        assertEquals("agent1", row.getAgentId());
+    }
+
+    @Test
     void shouldInsertSyncUsageWithoutConversationContext() {
         LlmUsageRecordMapper usageMapper = mock(LlmUsageRecordMapper.class);
         LlmUsageRecorder recorder = new LlmUsageRecorder(usageMapper);

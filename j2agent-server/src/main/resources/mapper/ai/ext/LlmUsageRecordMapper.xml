@@ -2,11 +2,16 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="io.github.jerryt92.j2agent.mapper.ext.LlmUsageRecordMapper">
 
+  <!-- app_user.id 为 char(32)，API Key 会话写入的 varchar user_id 可能带尾部空格；比较与聚合统一 trim -->
+  <sql id="Usage_User_Join">
+    left join app_user u on trim(u.id) = trim(r.user_id)
+  </sql>
+
   <sql id="Summary_Where">
     <where>
       r.usage_status = 'AVAILABLE'
       <if test="userId != null and userId != ''">
-        and r.user_id = #{userId}
+        and trim(r.user_id) = #{userId}
       </if>
       <if test="username != null and username != ''">
         and u.username like concat('%', #{username}, '%')
@@ -23,7 +28,7 @@
   <sql id="Record_Where">
     <where>
       <if test="userId != null and userId != ''">
-        and r.user_id = #{userId}
+        and trim(r.user_id) = #{userId}
       </if>
       <if test="agentId != null and agentId != ''">
         and r.agent_id = #{agentId}
@@ -64,25 +69,25 @@
 
   <select id="countSummaryByUser" resultType="long">
     select count(1) from (
-      select r.user_id
+      select trim(r.user_id)
       from llm_usage_record r
-      left join app_user u on u.id = r.user_id
+      <include refid="Usage_User_Join"/>
       <include refid="Summary_Where"/>
-      group by r.user_id
+      group by trim(r.user_id)
     ) t
   </select>
 
   <select id="selectSummaryByUser" resultType="io.github.jerryt92.j2agent.model.po.LlmUsageSummaryRow">
-    select r.user_id as userId,
+    select trim(r.user_id) as userId,
            max(u.username) as username,
            count(1) as callCount,
            coalesce(sum(r.input_tokens), 0) as inputTokens,
            coalesce(sum(r.output_tokens), 0) as outputTokens,
            coalesce(sum(r.billable_token_count), 0) as billableTokens
     from llm_usage_record r
-    left join app_user u on u.id = r.user_id
+    <include refid="Usage_User_Join"/>
     <include refid="Summary_Where"/>
-    group by r.user_id
+    group by trim(r.user_id)
     order by billableTokens desc, callCount desc
     limit #{limit} offset #{offset}
   </select>
@@ -95,20 +100,20 @@
            coalesce(sum(r.output_tokens), 0) as outputTokens,
            coalesce(sum(r.billable_token_count), 0) as billableTokens
     from llm_usage_record r
-    left join app_user u on u.id = r.user_id
+    <include refid="Usage_User_Join"/>
     <include refid="Summary_Where"/>
   </select>
 
   <select id="countRecords" resultType="long">
     select count(1)
     from llm_usage_record r
-    left join app_user u on u.id = r.user_id
+    <include refid="Usage_User_Join"/>
     <include refid="Record_Where"/>
   </select>
 
   <select id="selectRecords" resultType="io.github.jerryt92.j2agent.model.po.LlmUsageRecordQueryRow">
     select r.id as id,
-           r.user_id as userId,
+           trim(r.user_id) as userId,
            u.username as username,
            r.context_id as contextId,
            r.agent_id as agentId,
@@ -124,10 +129,35 @@
            r.usage_status as usageStatus,
            r.create_time as createTime
     from llm_usage_record r
-    left join app_user u on u.id = r.user_id
+    <include refid="Usage_User_Join"/>
     <include refid="Record_Where"/>
     order by r.create_time desc, r.call_seq desc
     limit #{limit} offset #{offset}
   </select>
+
+  <select id="selectDistinctUserIds" resultType="string">
+    select distinct trim(user_id) from llm_usage_record
+    where user_id is not null and trim(user_id) != ''
+  </select>
+
+  <select id="countByIds" resultType="int">
+    select count(1) from llm_usage_record where id in
+    <foreach collection="ids" item="id" open="(" close=")" separator=",">#{id}</foreach>
+  </select>
+
+  <delete id="deleteByIds">
+    delete from llm_usage_record where id in
+    <foreach collection="ids" item="id" open="(" close=")" separator=",">#{id}</foreach>
+  </delete>
+
+  <select id="countByUserIds" resultType="int">
+    select count(1) from llm_usage_record where trim(user_id) in
+    <foreach collection="userIds" item="userId" open="(" close=")" separator=",">#{userId}</foreach>
+  </select>
+
+  <delete id="deleteByUserIds">
+    delete from llm_usage_record where trim(user_id) in
+    <foreach collection="userIds" item="userId" open="(" close=")" separator=",">#{userId}</foreach>
+  </delete>
 
 </mapper>

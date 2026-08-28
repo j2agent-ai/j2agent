@@ -112,7 +112,12 @@ public class ChatService {
             ChatRequestDto request,
             UserContextBo userContext,
             String agentId) {
-        String userId = userContext == null ? null : userContext.getUserId();
+        String userId = userContext == null || userContext.getUserId() == null
+                ? null
+                : userContext.getUserId().trim();
+        if (userContext != null && userId != null) {
+            userContext.setUserId(userId);
+        }
         String turnId = UUIDv7Utils.randomUUIDv7();
         ChatTurnCancellationRegistry.clear(turnId);
         AtomicLong seq = new AtomicLong(0L);
