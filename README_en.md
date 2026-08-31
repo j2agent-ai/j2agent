@@ -239,7 +239,7 @@ Most open-source Agent platforms are Python-based. J2Agent targets Java develope
 - **Agent runtime**: Spring AI Alibaba `ReactAgent`; `AiAgent` abstraction for models, tools, hooks, and single-turn/stream orchestration (`ChatService`).
 - **Multi-agent routing**: `AgentRouter` dispatches by `agent-id`; business agents (`extends AiAgent`) auto-register via Spring injection in plugins.
 - **Spring AI models & tools**: `ChatClient`, Advisor chain, Function / Tool Calling; compatible with Ollama, OpenAI-style APIs, and more.
-- **RAG retrieval**: Milvus + `RetrievalAugmentationAdvisor`; per-collection `AbstractCollectionKbRetriever` with sync and hit testing.
+- **RAG retrieval**: Milvus + `RetrievalAugmentationAdvisor`; `AbstractCollectionKbRetriever` supports multiple collections, synchronization, and hit testing.
 - **MCP integration**: `McpService` connects external MCP servers; clients interact with LLMs via Function Calling to reduce prompt token usage.
 - **Skills progressive disclosure**: `SkillRegistry` + `read_skill` loads `SKILL.md` on demand; load events are auditable and pushed to AgentUi.
 - **Conversation memory**: Extensible `ChatMemory`; `RedissonCachingChatMemoryRepository` (Redis cache + JDBC persistence).

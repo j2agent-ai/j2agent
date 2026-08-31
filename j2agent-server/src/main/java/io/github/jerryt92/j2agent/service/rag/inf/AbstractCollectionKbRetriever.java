@@ -22,13 +22,14 @@ import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * 与 collection 绑定的知识库检索器抽象基类。
+ * 与一个或多个 collection 绑定的知识库检索器抽象基类。
  */
 @Slf4j
 public abstract class AbstractCollectionKbRetriever implements DocumentRetriever {
@@ -41,9 +42,10 @@ public abstract class AbstractCollectionKbRetriever implements DocumentRetriever
     }
 
     /**
-     * 返回当前检索器绑定的 collection 名称。
+     * 返回当前检索器绑定的 Milvus collection 名称列表。
+     * <p>每个 collection 会独立检索，最终按 {@code textChunkId} 去重并保持此列表的顺序。</p>
      */
-    protected abstract String boundCollection();
+    protected abstract List<String> boundCollections();
 
     /**
      * 返回当前检索器绑定的分区列表，默认全分区。
@@ -59,7 +61,9 @@ public abstract class AbstractCollectionKbRetriever implements DocumentRetriever
     @Override
     public List<Document> retrieve(Query query) {
         String conversationId = PromptConversationIdExtractor.extract(query);
-        if (query != null && Boolean.TRUE.equals(query.context().get(QueryTransformContextKeys.SKIP_RETRIEVAL))) {
+        if (query != null
+                && query.context() != null
+                && Boolean.TRUE.equals(query.context().get(QueryTransformContextKeys.SKIP_RETRIEVAL))) {
             logRagSkip(conversationId, "imageOnlyNoQueryText");
             return Collections.emptyList();
         }
@@ -72,30 +76,60 @@ public abstract class AbstractCollectionKbRetriever implements DocumentRetriever
             logRagSkip(conversationId, "reactToolLoop");
             return Collections.emptyList();
         }
-        Retriever.RagChunksResult ragChunksResult = retriever.retrieveRagChunksResult(
-                queryText, boundCollection(), boundPartitions(), conversationId);
-        if (ragChunksResult.status() == Retriever.RetrievalStatus.FAILED) {
-            logRagRetrieve(conversationId, boundCollection(), ragChunksResult.status(),
-                    0, 0, ragChunksResult.failureMessage(), List.of());
-            return List.of(buildFallbackDocument());
+        List<String> collections = normalizeCollections();
+        if (collections.isEmpty()) {
+            logRagSkip(conversationId, "emptyBoundCollections");
+            return Collections.emptyList();
         }
-        List<EmbeddingModel.EmbeddingsQueryItem> embeddingsQueryItems = ragChunksResult.items();
-        List<Document> documents = buildDocuments(embeddingsQueryItems);
-        logRagRetrieve(conversationId, boundCollection(), ragChunksResult.status(),
-                embeddingsQueryItems.size(), documents.size(), null, embeddingsQueryItems);
+
+        Map<String, Document> documentsByKey = new LinkedHashMap<>();
+        boolean anyFailure = false;
+        for (String collection : collections) {
+            Retriever.RagChunksResult ragChunksResult = retriever.retrieveRagChunksResult(
+                    queryText, collection, boundPartitions(), conversationId);
+            if (ragChunksResult.status() == Retriever.RetrievalStatus.FAILED) {
+                anyFailure = true;
+                logRagRetrieve(conversationId, collection, ragChunksResult.status(),
+                        0, 0, ragChunksResult.failureMessage(), List.of());
+                continue;
+            }
+            List<EmbeddingModel.EmbeddingsQueryItem> embeddingsQueryItems = ragChunksResult.items();
+            List<Document> collectionDocuments = buildDocuments(embeddingsQueryItems);
+            logRagRetrieve(conversationId, collection, ragChunksResult.status(),
+                    embeddingsQueryItems.size(), collectionDocuments.size(), null, embeddingsQueryItems);
+            for (Document document : collectionDocuments) {
+                documentsByKey.putIfAbsent(documentKey(document), document);
+            }
+        }
+        List<Document> documents = new ArrayList<>(documentsByKey.values());
+        if (documents.isEmpty() && anyFailure) {
+            documents = List.of(buildFallbackDocument());
+        }
         String agentId = extractAgentId(query);
         RagSourcePublicationService.tryPublishFromRetriever(conversationId, agentId, documents);
         return documents;
     }
 
+    private List<String> normalizeCollections() {
+        List<String> configuredCollections = boundCollections();
+        if (configuredCollections == null || configuredCollections.isEmpty()) {
+            return List.of();
+        }
+        return configuredCollections.stream()
+                .filter(StringUtils::isNotBlank)
+                .map(String::trim)
+                .distinct()
+                .toList();
+    }
+
     private void logRagSkip(String conversationId, String reason) {
         if (conversationId != null) {
             AgentRunLogger.infoByConversationId(conversationId, AgentRunEventType.RAG_SKIP,
-                    AgentRunLogger.kv("rag", "collection=" + boundCollection() + ",reason=" + reason),
+                    AgentRunLogger.kv("rag", "collections=" + normalizeCollections() + ",reason=" + reason),
                     "RAG retrieval skipped");
             return;
         }
-        log.info("RAG 对话检索跳过: collection={}, reason={}", boundCollection(), reason);
+        log.info("RAG 对话检索跳过: collections={}, reason={}", normalizeCollections(), reason);
     }
 
     private void logRagRetrieve(String conversationId,
@@ -160,6 +194,15 @@ public abstract class AbstractCollectionKbRetriever implements DocumentRetriever
                     .build());
         }
         return documents;
+    }
+
+    private String documentKey(Document document) {
+        Object textChunkId = document.getMetadata().get("textChunkId");
+        if (textChunkId != null && StringUtils.isNotBlank(textChunkId.toString())) {
+            return "id:" + textChunkId;
+        }
+        Object sourceFile = document.getMetadata().get("sourceFile");
+        return "doc:" + sourceFile + ":" + document.getText();
     }
 
     /**

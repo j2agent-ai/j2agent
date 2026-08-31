@@ -253,7 +253,7 @@ graph TD
 - **Agent 运行时**：基于 Spring AI Alibaba `ReactAgent`；`AiAgent` 抽象封装模型、工具、Hooks 与单轮/流式编排（`ChatService`）。
 - **多智能体路由**：`AgentRouter` 按 `agent-id` 分发；插件中 `extends AiAgent` 的业务 Agent 经 Spring 注入自动注册。
 - **Spring AI 模型与工具**：`ChatClient`、Advisor 链、Function / Tool Calling；兼容 Ollama、OpenAI 等接口。
-- **RAG 知识检索**：Milvus + `RetrievalAugmentationAdvisor`；Collection 级 `AbstractCollectionKbRetriever`，支持知识同步与命中测试。
+- **RAG 知识检索**：Milvus + `RetrievalAugmentationAdvisor`；`AbstractCollectionKbRetriever` 支持绑定多个 Collection、知识同步与命中测试。
 - **MCP 工具接入**：`McpService` 外连 MCP 服务；Client 与 LLM 以 Function Calling 交互，降低 Prompt Token 消耗。
 - **Skills 渐进式披露**：`SkillRegistry` + `read_skill` 按需加载 `SKILL.md`；加载过程可审计并推送 AgentUi 事件。
 - **对话记忆**：可扩展 `ChatMemory` 策略；`RedissonCachingChatMemoryRepository`（Redis 缓存 + JDBC 落库）。

@@ -31,8 +31,8 @@ class AbstractCollectionKbRetrieverFallbackTest {
 
         AbstractCollectionKbRetriever kbRetriever = new AbstractCollectionKbRetriever(retriever) {
             @Override
-            protected String boundCollection() {
-                return "docs";
+            protected List<String> boundCollections() {
+                return List.of("docs");
             }
         };
 
