@@ -3,10 +3,14 @@ package io.github.jerryt92.j2agent.service.llm.agent.builtin.knowledgeqa;
 import io.github.jerryt92.j2agent.config.rag.KnowledgeRepoProperties;
 import io.github.jerryt92.j2agent.mapper.KnowledgeRepositoryMapper;
 import io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo;
+import io.github.jerryt92.j2agent.model.security.UserContextBo;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunnableContextKeys;
+import io.github.jerryt92.j2agent.service.rag.knowledge.KnowledgeCollectionSelection;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeMarkdownImageRewriter;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMetadataService;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repository.KnowledgeRepositoryAutoRegistrar;
+import io.github.jerryt92.j2agent.service.security.ResourceAccessService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -16,12 +20,15 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -34,6 +41,7 @@ class KnowledgeQaGrepToolTest {
     Path tempDir;
 
     private CapturingKnowledgeQaGrepTool tool;
+    private ResourceAccessService access;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -51,7 +59,24 @@ class KnowledgeQaGrepToolTest {
         KnowledgeRepoMetadataService metadataService = new KnowledgeRepoMetadataService(
                 properties, mapper, new KnowledgeRepositoryAutoRegistrar(mapper, properties));
         metadataService.init();
+        access = mock(ResourceAccessService.class);
+        when(access.resolveCollections(any(), any(), eq(false))).thenAnswer(invocation -> {
+            Collection<String> requested = invocation.getArgument(1);
+            if (requested == null) {
+                return List.of();
+            }
+            List<String> allowed = new ArrayList<>();
+            for (String raw : requested) {
+                KnowledgeCollectionSelection.Parsed parsed = KnowledgeCollectionSelection.parse(raw);
+                if (parsed != null) {
+                    String repoCode = parsed.repoCode() != null ? parsed.repoCode() : parsed.collection();
+                    allowed.add(KnowledgeCollectionSelection.encode(repoCode, parsed.collection()));
+                }
+            }
+            return allowed;
+        });
         tool = new CapturingKnowledgeQaGrepTool(metadataService, new KnowledgeMarkdownImageRewriter());
+        tool.setResourceAccess(access);
     }
 
     @Test
@@ -128,6 +153,37 @@ class KnowledgeQaGrepToolTest {
         assertFalse(result.contains("共享输出设备需完成身份验证后方可使用"));
     }
 
+    @Test
+    void grep_withoutKnowledgeGrantDoesNotReadPrivateRepo() {
+        org.mockito.Mockito.doReturn(List.of()).when(access).resolveCollections(any(), any(), eq(false));
+
+        String result = tool.grepKnowledgeRepo("共享输出设备", "", context("knowledge_base"));
+
+        assertTrue(result.contains("无权访问所选知识库"));
+        assertFalse(result.contains("共享输出设备需完成身份验证后方可使用"));
+    }
+
+    @Test
+    void read_withoutKnowledgeGrantDoesNotReadPrivateRepo() {
+        org.mockito.Mockito.doReturn(List.of()).when(access).resolveCollections(any(), any(), eq(false));
+
+        String result = tool.readKnowledgeRepoFile("knowledge_base/common/guide.md", null, context("knowledge_base"));
+
+        assertTrue(result.contains("无权访问所选知识库"));
+        assertFalse(result.contains("共享输出设备需完成身份验证后方可使用"));
+    }
+
+    @Test
+    void grep_withoutTurnUserDoesNotReadPrivateRepo() {
+        ToolContext noUser = new ToolContext(Map.of(
+                AgentRunnableContextKeys.CONTEXT_KEY_KNOWLEDGE_COLLECTIONS, List.of("knowledge_base")));
+
+        String result = tool.grepKnowledgeRepo("共享输出设备", "", noUser);
+
+        assertTrue(result.contains("无权访问所选知识库"));
+        assertFalse(result.contains("共享输出设备需完成身份验证后方可使用"));
+    }
+
     private void writeKnowledgeRepo(String dir, String collection, String relativeFile, String content) throws IOException {
         Path repoDir = tempDir.resolve(dir);
         Files.createDirectories(repoDir);
@@ -146,9 +202,12 @@ class KnowledgeQaGrepToolTest {
     }
 
     private ToolContext context(String... collections) {
+        UserContextBo user = new UserContextBo();
+        user.setUserId("ordinary-user");
+        user.setRole(UserRoleEnum.USER);
         return new ToolContext(Map.of(
-                AgentRunnableContextKeys.CONTEXT_KEY_KNOWLEDGE_COLLECTIONS,
-                List.of(collections)));
+                AgentRunnableContextKeys.CONTEXT_KEY_KNOWLEDGE_COLLECTIONS, List.of(collections),
+                AgentRunnableContextKeys.CONTEXT_KEY_USER_CONTEXT, user));
     }
 
     private static final class CapturingKnowledgeQaGrepTool extends KnowledgeQaGrepTool {

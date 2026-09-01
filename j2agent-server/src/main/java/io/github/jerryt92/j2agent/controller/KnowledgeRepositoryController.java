@@ -19,9 +19,13 @@ import org.springframework.web.bind.annotation.RestController;
  * 知识库仓库管理接口。
  */
 @RestController
-@RequiredRole(UserRoleEnum.KB_ADMIN)
+@RequiredRole(UserRoleEnum.KNOWLEDGE_ADMIN)
 @RequestMapping("/v1/rest/j2agent/knowledge/repositories")
 public class KnowledgeRepositoryController {
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.service.security.ResourceAccessService access;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final KnowledgeRepositoryService service;
 
     public KnowledgeRepositoryController(KnowledgeRepositoryService service) {
@@ -55,6 +59,12 @@ public class KnowledgeRepositoryController {
     public ResponseEntity<Void> delete(@PathVariable String id) {
         service.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/tasks")
+    public java.util.List<java.util.Map<String,Object>> tasks(@PathVariable String id) {
+        String repositoryId=access.requireRepository(access.current(),id,2).getId();
+        return jdbc.queryForList("SELECT id,operation,status,error_message AS \"errorMessage\",created_at AS \"createdAt\",updated_at AS \"updatedAt\" FROM knowledge_repository_task WHERE repository_id=? ORDER BY created_at DESC LIMIT 50",repositoryId);
     }
 
     @PostMapping("/{id}/sync")

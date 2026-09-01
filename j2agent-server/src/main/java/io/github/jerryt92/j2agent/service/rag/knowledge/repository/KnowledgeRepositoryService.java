@@ -44,6 +44,16 @@ import java.util.stream.Stream;
 @Slf4j
 @Service
 public class KnowledgeRepositoryService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.service.security.ResourceAccessService resourceAccess;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private RepositoryMaintenanceService repositoryMaintenance;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate permissionJdbc;
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.service.security.ResourcePermissionCache permissions;
+
     private final KnowledgeRepositoryMapper mapper;
     private final KnowledgeRepoProperties properties;
     private final KnowledgeRepoMaintenanceCoordinator maintenanceCoordinator;
@@ -81,7 +91,7 @@ public class KnowledgeRepositoryService {
 
     public KnowledgeRepositoryDtos.ListResponse list() {
         autoRegistrar.ensureLocalRepositoriesForExistingDirectories();
-        List<KnowledgeRepositoryDtos.Item> items = mapper.selectAll().stream()
+        List<KnowledgeRepositoryDtos.Item> items = resourceAccess.readable(resourceAccess.current()).stream()
                 .map(this::toItem)
                 .sorted(Comparator.comparing(KnowledgeRepositoryDtos.Item::getRepoCode))
                 .toList();
@@ -91,7 +101,7 @@ public class KnowledgeRepositoryService {
     }
 
     public KnowledgeRepositoryDtos.Item get(String repoCodeOrId) {
-        KnowledgeRepositoryPo po = mapper.selectById(repoCodeOrId);
+        KnowledgeRepositoryPo po = resourceAccess.requireRepository(resourceAccess.current(), repoCodeOrId, 2);
         if (po == null) {
             po = mapper.selectByRepoCode(repoCodeOrId);
         }
@@ -106,6 +116,7 @@ public class KnowledgeRepositoryService {
         String remoteUrl = KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)
                 ? requireText(request.getRemoteUrl(), "remoteUrl")
                 : StringUtils.trimToNull(request.getRemoteUrl());
+        validateRemoteTransport(remoteUrl);
         String repoCode = normalizeRepoCode(StringUtils.defaultIfBlank(
                 request.getRepoCode(),
                 KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type) ? deriveRepoCodeFromRemoteUrl(remoteUrl) : null));
@@ -113,6 +124,8 @@ public class KnowledgeRepositoryService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repository config already exists");
         }
         Path repoPath = resolveRepoPath(repoCode);
+        if (!resourceAccess.current().isKnowledgeAdmin() && Files.exists(repoPath))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Repository directory already exists");
         if (KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)) {
             validateRemoteDirectory(repoPath, remoteUrl);
         }
@@ -120,6 +133,8 @@ public class KnowledgeRepositoryService {
         long now = System.currentTimeMillis();
         KnowledgeRepositoryPo po = new KnowledgeRepositoryPo();
         po.setId(UUIDv7Utils.randomUUIDv7());
+        po.setCreatorUserId(resourceAccess.current().getUserId().trim());
+        po.setIsPublic(false);
         po.setRepoCode(repoCode);
         applyConfig(po, request, type, remoteUrl, null, now);
         po.setStatus(KnowledgeRepositoryConstants.STATUS_IDLE);
@@ -128,13 +143,18 @@ public class KnowledgeRepositoryService {
         if (KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type)) {
             submitSync(po, "create");
         } else {
-            triggerKnowledgeSync("create-local", po.getRepoCode());
+            repositoryMaintenance.submit(po, resourceAccess.current().getUserId(), () -> {});
         }
         return toItem(mapper.selectById(po.getId()));
     }
 
     public KnowledgeRepositoryDtos.Item update(String id, KnowledgeRepositoryDtos.UpsertRequest request) {
+        resourceAccess.requireRepository(resourceAccess.current(), id, 1);
+        return repositoryMaintenance.exclusiveRepository(id, () -> updateLocked(id,request));
+    }
+    private KnowledgeRepositoryDtos.Item updateLocked(String id, KnowledgeRepositoryDtos.UpsertRequest request) {
         KnowledgeRepositoryPo current = requireConfigured(id);
+        if (java.util.Set.of("SYNCING","REBUILDING","DELETING").contains(current.getStatus())) throw new ResponseStatusException(HttpStatus.CONFLICT,"KNOWLEDGE_BUSY");
         if (StringUtils.isNotBlank(request.getRepoCode()) && !current.getRepoCode().equals(request.getRepoCode().trim())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repoCode cannot be changed");
         }
@@ -148,30 +168,39 @@ public class KnowledgeRepositoryService {
         long now = System.currentTimeMillis();
         applyConfig(current, request, type, remoteUrl, current, now);
         mapper.updateConfig(current);
-        triggerKnowledgeSync("update", current.getRepoCode());
+        repositoryMaintenance.submit(current, resourceAccess.current().getUserId(), () -> {});
         return toItem(mapper.selectById(id));
     }
 
+    /**
+     * 删除知识库：同一请求内先打断 Git 同步，再清理向量与目录并删除配置。
+     */
     public void delete(String id) {
+        resourceAccess.requireRepository(resourceAccess.current(),id,0);
+        repositoryMaintenance.interruptRunning(id);
+        repositoryMaintenance.exclusiveRepository(id, () -> { deleteLocked(id); return null; });
+    }
+    private void deleteLocked(String id) {
         KnowledgeRepositoryPo po = requireConfigured(id);
-        if (runningRepositoryCodes.contains(po.getRepoCode())) {
+        if (java.util.Set.of("REBUILDING","DELETING").contains(po.getStatus())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "repository is syncing");
         }
+        mapper.updateStatus(id,"DELETING",null,System.currentTimeMillis());
+        var grantedUsers=permissionJdbc.queryForList("SELECT user_id FROM user_knowledge_permission WHERE knowledge_repository_id=?",String.class,id);
+        for(String uid:grantedUsers) permissions.mutate(uid, () -> permissionJdbc.update("DELETE FROM user_knowledge_permission WHERE user_id=? AND knowledge_repository_id=?",uid,id));
+        repositoryMaintenance.cleanup(po);
         deleteRepositoryDirectory(resolveRepoPath(po.getRepoCode()));
         mapper.deleteById(po.getId());
-        triggerKnowledgeSync("delete", po.getRepoCode());
+        // Target data was cleaned before the repository configuration was removed.
     }
 
     public KnowledgeRepositoryDtos.SyncResponse syncNow(String id) {
+        resourceAccess.requireRepository(resourceAccess.current(),id,1);
         KnowledgeRepositoryPo po = requireConfigured(id);
         if (KnowledgeRepositoryConstants.TYPE_REMOTE.equals(normalizeType(po.getType()))) {
             return submitSync(po, "manual");
         }
-        KnowledgeRepositoryDtos.SyncResponse response = new KnowledgeRepositoryDtos.SyncResponse();
-        KnowledgeRepoSyncOutcome outcome = maintenanceCoordinator.syncNowAsync(false);
-        response.setSuccess(outcome.succeeded());
-        response.setMessage(outcome.message());
-        return response;
+        return repositoryMaintenance.submit(po,resourceAccess.current().getUserId(),() -> {});
     }
 
     @Scheduled(cron = "0 * * * * *")
@@ -181,12 +210,24 @@ public class KnowledgeRepositoryService {
             if (!Boolean.TRUE.equals(po.getEnabled())) {
                 continue;
             }
+            if (Set.of("SYNCING", "REBUILDING", "DELETING").contains(po.getStatus())) {
+                continue;
+            }
             int interval = normalizeInterval(po.getUpdateIntervalMinutes());
             Long lastSyncTime = po.getLastSyncTime();
             if (lastSyncTime != null && now - lastSyncTime < interval * 60_000L) {
                 continue;
             }
-            submitSync(po, "schedule");
+            try {
+                submitSync(po, "schedule");
+            } catch (ResponseStatusException e) {
+                // 重建/同步进行中属预期冲突，不应让整轮定时任务失败
+                if (e.getStatusCode().isSameCodeAs(HttpStatus.CONFLICT)) {
+                    log.debug("定时同步跳过忙库: repoCode={}, status={}", po.getRepoCode(), po.getStatus());
+                    continue;
+                }
+                throw e;
+            }
         }
     }
 
@@ -196,6 +237,7 @@ public class KnowledgeRepositoryService {
                              String remoteUrl,
                              KnowledgeRepositoryPo current,
                              long now) {
+        validateRemoteTransport(remoteUrl);
         String repoCode = po.getRepoCode();
         po.setType(type);
         po.setProtocol(KnowledgeRepositoryConstants.TYPE_REMOTE.equals(type) ? normalizeProtocol(request.getProtocol()) : null);
@@ -237,7 +279,17 @@ public class KnowledgeRepositoryService {
         po.setUpdatedAt(now);
     }
 
+    private static void validateRemoteTransport(String remoteUrl) {
+        if(remoteUrl==null || remoteUrl.isBlank()) return;
+        if(!remoteUrl.matches("(?i)^(https?://|ssh://|git@)[^\\s]+$"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Only HTTP(S) or SSH Git remotes are allowed");
+    }
+
     private KnowledgeRepositoryDtos.SyncResponse submitSync(KnowledgeRepositoryPo po, String trigger) {
+        return repositoryMaintenance.submit(po, null, () -> syncRepository(po,trigger));
+    }
+
+    private KnowledgeRepositoryDtos.SyncResponse unusedLegacySubmitSync(KnowledgeRepositoryPo po, String trigger) {
         KnowledgeRepositoryDtos.SyncResponse response = new KnowledgeRepositoryDtos.SyncResponse();
         if (!runningRepositoryCodes.add(po.getRepoCode())) {
             response.setSuccess(false);
@@ -282,11 +334,10 @@ public class KnowledgeRepositoryService {
                         po.getRepoCode(), trigger, result.revision());
                 return;
             }
-            KnowledgeRepoSyncOutcome outcome = maintenanceCoordinator.syncNowAsync(false);
-            if (!outcome.succeeded()) {
-                throw new IllegalStateException(outcome.message());
-            }
+            // RepositoryMaintenanceService performs scoped indexing after the pull.
             log.info("知识库仓库同步完成: repoCode={}, trigger={}, revision={}", po.getRepoCode(), trigger, result.revision());
+        } catch (java.util.concurrent.CancellationException e) {
+            throw e;
         } catch (Exception e) {
             long failedAt = System.currentTimeMillis();
             String message = StringUtils.defaultIfBlank(e.getMessage(), "知识库仓库同步失败");
@@ -296,6 +347,7 @@ public class KnowledgeRepositoryService {
             po.setUpdatedAt(failedAt);
             mapper.updateSyncResult(po);
             log.warn("知识库仓库同步失败: repoCode={}, trigger={}, error={}", po.getRepoCode(), trigger, message, e);
+            throw new IllegalStateException(message,e);
         }
     }
 
@@ -304,15 +356,24 @@ public class KnowledgeRepositoryService {
         Path repoPath = resolveRepoPath(po.getRepoCode());
         KnowledgeRepositoryDtos.Item item = new KnowledgeRepositoryDtos.Item();
         item.setId(po.getId());
+        item.setCreatorUserId(po.getCreatorUserId());
+        item.setIsPublic(po.getIsPublic());
+        boolean owner=resourceAccess.current().isKnowledgeAdmin() || resourceAccess.current().getUserId().trim().equals(po.getCreatorUserId()==null?"":po.getCreatorUserId().trim());
+        boolean manage=owner || resourceAccess.repositories(resourceAccess.current(),true).stream().anyMatch(p -> p.getId().equals(po.getId()));
+        item.setCanManage(manage); item.setCanShare(owner);
         item.setRepoCode(po.getRepoCode());
         item.setType(type);
         item.setProtocol(po.getProtocol());
         item.setEnabled(po.getEnabled());
-        item.setReadonly(false);
-        item.setLocalPath(repoPath.toAbsolutePath().normalize().toString());
+        item.setReadonly(!manage);
+        item.setLocalPath(manage ? repoPath.toAbsolutePath().normalize().toString() : null);
         item.setUpdateIntervalMinutes(po.getUpdateIntervalMinutes());
         item.setStatus(resolveDisplayStatus(repoPath, po));
-        item.setRemoteUrl(po.getRemoteUrl());
+        // 全局完全重建时统一展示状态，有库权限的用户均可见
+        if (maintenanceCoordinator != null && maintenanceCoordinator.isFullRebuildRunning()) {
+            item.setStatus(KnowledgeRepositoryConstants.STATUS_GLOBAL_REBUILDING);
+        }
+        item.setRemoteUrl(manage ? po.getRemoteUrl() : null);
         item.setDefaultBranch(po.getDefaultBranch());
         item.setLastRevision(po.getLastRevision());
         item.setLastRevisionMessage(po.getLastRevisionMessage());

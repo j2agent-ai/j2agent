@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ext.KnowledgeRepoSyncMapper">
+
+  <select id="selectOwnedFilesByRepoCode"
+          resultType="io.github.jerryt92.j2agent.model.po.KnowledgeRepoOwnedFileRow">
+    SELECT source_file AS path, collection_name AS collectionName
+    FROM knowledge_text_chunk
+    WHERE split_part(source_file, '/', 1) = #{repoCode}
+    UNION
+    SELECT file_path AS path, collection_name AS collectionName
+    FROM knowledge_source_file_hash
+    WHERE split_part(file_path, '/', 1) = #{repoCode}
+  </select>
+
+  <delete id="deleteTextChunksByRepoCode">
+    DELETE FROM knowledge_text_chunk
+    WHERE split_part(source_file, '/', 1) = #{repoCode}
+  </delete>
+
+  <delete id="deleteFileHashesByRepoCode">
+    DELETE FROM knowledge_source_file_hash
+    WHERE split_part(file_path, '/', 1) = #{repoCode}
+  </delete>
+
+</mapper>

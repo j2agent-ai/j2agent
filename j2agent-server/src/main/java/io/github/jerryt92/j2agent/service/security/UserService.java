@@ -35,6 +35,8 @@ import java.util.UUID;
  */
 @Service
 public class UserService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private ResourcePermissionCache resourcePermissionCache;
     private static final String BUILTIN_ADMIN_USERNAME = "aiadmin";
     private static final int MAX_EXTERNAL_USER_ID_LENGTH = 32;
     private static final int USERNAME_SUFFIX_LENGTH = 6;
@@ -160,7 +162,7 @@ public class UserService {
         UserPo user = requireUser(userId);
         ensureNotApiUser(user);
         ensureMutableUser(user);
-        userPoMapper.deleteByPrimaryKey(userId);
+        resourcePermissionCache.mutate(userId, () -> userPoMapper.deleteByPrimaryKey(userId));
         loginService.invalidateUserLogin(userId);
     }
 

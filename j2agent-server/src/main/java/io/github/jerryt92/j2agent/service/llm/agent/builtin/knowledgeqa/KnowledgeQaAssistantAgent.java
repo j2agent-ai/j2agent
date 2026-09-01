@@ -7,6 +7,7 @@ import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeMarkdownIm
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMetadataService;
 import io.github.jerryt92.j2agent.service.rag.inf.DynamicKnowledgeCollectionsRetriever;
 import io.github.jerryt92.j2agent.service.rag.retrieval.Retriever;
+import io.github.jerryt92.j2agent.service.security.ResourceAccessService;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.rag.generation.augmentation.ContextualQueryAugmenter;
 import org.springframework.ai.rag.generation.augmentation.QueryAugmenter;
@@ -23,9 +24,11 @@ public class KnowledgeQaAssistantAgent extends AiAgent {
 
     public KnowledgeQaAssistantAgent(Retriever retriever,
                                      KnowledgeRepoMetadataService metadataService,
-                                     KnowledgeMarkdownImageRewriter imageRewriter) {
+                                     KnowledgeMarkdownImageRewriter imageRewriter,
+                                     ResourceAccessService resourceAccess) {
         this.documentRetriever = new DynamicKnowledgeCollectionsRetriever(retriever);
         this.grepTool = new KnowledgeQaGrepTool(metadataService, imageRewriter);
+        this.grepTool.setResourceAccess(resourceAccess);
     }
 
     @Override

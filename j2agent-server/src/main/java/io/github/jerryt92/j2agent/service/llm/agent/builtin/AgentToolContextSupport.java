@@ -4,6 +4,7 @@ import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunnableContextKey
 import io.github.jerryt92.j2agent.service.llm.tool.AgentUiToolEventInterceptor;
 import io.github.jerryt92.j2agent.service.llm.tool.ToolEventEmitter;
 import io.github.jerryt92.j2agent.model.security.UserContextBo;
+import io.github.jerryt92.j2agent.service.security.AgentAccessContext;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.model.ToolContext;
 
@@ -52,6 +53,17 @@ public final class AgentToolContextSupport {
     public static UserContextBo userContext(ToolContext toolContext) {
         Object raw = contextMap(toolContext).get(AgentRunnableContextKeys.CONTEXT_KEY_USER_CONTEXT);
         return raw instanceof UserContextBo userContext ? userContext : null;
+    }
+
+    /**
+     * 解析本轮工具调用的用户身份：优先 ToolContext，其次会话绑定；不回退请求线程登录态。
+     */
+    public static UserContextBo resolveTurnUser(ToolContext toolContext) {
+        UserContextBo fromContext = userContext(toolContext);
+        if (fromContext != null) {
+            return fromContext;
+        }
+        return AgentAccessContext.get(parentConversationId(toolContext));
     }
 
     public static String language(ToolContext toolContext) {

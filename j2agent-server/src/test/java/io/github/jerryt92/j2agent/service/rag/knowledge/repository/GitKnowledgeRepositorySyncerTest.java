@@ -154,6 +154,27 @@ class GitKnowledgeRepositorySyncerTest {
                 () -> syncer.sync(po, new KnowledgeRepositoryDtos.CredentialConfig(), local));
     }
 
+    @Test
+    void syncAbortsWhenCurrentThreadIsInterrupted() throws Exception {
+        Path remote = tempDir.resolve("remote-interrupt");
+        Path local = tempDir.resolve("knowledge-repo").resolve("repo-interrupt");
+        Files.createDirectories(remote);
+        try (Git git = Git.init().setDirectory(remote.toFile()).setInitialBranch("main").call()) {
+            Files.writeString(remote.resolve("doc.md"), "# Doc\n", StandardCharsets.UTF_8);
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("initial").setAuthor("Tester", "test@example.com").call();
+        }
+        KnowledgeRepositoryPo po = repository(remote);
+        GitKnowledgeRepositorySyncer syncer = new GitKnowledgeRepositorySyncer();
+        Thread.currentThread().interrupt();
+        try {
+            assertThrows(java.util.concurrent.CancellationException.class,
+                    () -> syncer.sync(po, new KnowledgeRepositoryDtos.CredentialConfig(), local));
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
     private KnowledgeRepositoryPo repository(Path remote) {
         KnowledgeRepositoryPo po = new KnowledgeRepositoryPo();
         po.setRepoCode("repo");

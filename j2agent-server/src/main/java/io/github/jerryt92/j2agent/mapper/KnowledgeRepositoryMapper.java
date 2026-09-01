@@ -17,7 +17,7 @@ import java.util.List;
 public interface KnowledgeRepositoryMapper {
 
     String BASE_COLUMNS = """
-            id, repo_code AS repoCode, type, protocol, enabled,
+            id, creator_user_id AS creatorUserId, is_public AS isPublic, repo_code AS repoCode, type, protocol, enabled,
             update_interval_minutes AS updateIntervalMinutes, status,
             remote_url AS remoteUrl, default_branch AS defaultBranch,
             last_revision AS lastRevision, last_revision_message AS lastRevisionMessage,
@@ -90,13 +90,13 @@ public interface KnowledgeRepositoryMapper {
              remote_url, default_branch, last_revision, last_revision_message, last_revision_author,
              last_revision_time, last_sync_time, last_error, protocol_config,
              display_name, metadata_config, credential_config_cipher,
-             created_at, updated_at)
+             created_at, updated_at, creator_user_id, is_public)
             VALUES
             (#{id}, #{repoCode}, #{type}, #{protocol}, #{enabled}, #{updateIntervalMinutes}, #{status},
              #{remoteUrl}, #{defaultBranch}, #{lastRevision}, #{lastRevisionMessage}, #{lastRevisionAuthor},
              #{lastRevisionTime}, #{lastSyncTime}, #{lastError}, CAST(#{protocolConfig} AS jsonb),
              #{displayName}, CAST(#{metadataConfig} AS jsonb), #{credentialConfigCipher},
-             #{createdAt}, #{updatedAt})
+             #{createdAt}, #{updatedAt}, #{creatorUserId}, #{isPublic})
             """)
     int insert(KnowledgeRepositoryPo po);
 

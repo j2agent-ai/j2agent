@@ -18,6 +18,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class KnowledgeTextChunkService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate scopedJdbc;
 
     private final KnowledgeTextChunkMapper mapper;
 
@@ -65,7 +67,14 @@ public class KnowledgeTextChunkService {
             return Collections.emptyMap();
         }
         Map<String, KnowledgeTextChunkPo> result = new LinkedHashMap<>();
-        for (KnowledgeTextChunkPo po : mapper.selectByIds(distinctIds)) {
+        var repoCodes=io.github.jerryt92.j2agent.service.security.KnowledgeReadScope.repositoryCodes();
+        List<KnowledgeTextChunkPo> rows;
+        if (repoCodes == null) rows=mapper.selectByIds(distinctIds);
+        else if (repoCodes.isEmpty()) rows=List.of();
+        else rows=new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate(scopedJdbc).query(
+                "SELECT * FROM knowledge_text_chunk WHERE id IN (:ids) AND split_part(source_file,'/',1) IN (:repos)",
+                Map.of("ids",distinctIds,"repos",repoCodes),new org.springframework.jdbc.core.BeanPropertyRowMapper<>(KnowledgeTextChunkPo.class));
+        for (KnowledgeTextChunkPo po : rows) {
             result.put(po.getId(), po);
         }
         return result;
@@ -79,6 +88,17 @@ public class KnowledgeTextChunkService {
             return List.of();
         }
         String normalizedSearch = StringUtils.trimToNull(search);
+        var repos=io.github.jerryt92.j2agent.service.security.KnowledgeReadScope.repositoryCodes();
+        if(repos!=null) {
+            if(repos.isEmpty()) return List.of();
+            Map<String,Object> args=new java.util.HashMap<>();
+            args.put("collection",collectionName);args.put("repos",repos);args.put("offset",Math.max(offset,0));args.put("limit",Math.max(1,Math.min(limit,1000)));
+            args.put("search",normalizedSearch==null?"":"%"+normalizedSearch+"%");
+            return new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate(scopedJdbc).query(
+                    "SELECT * FROM knowledge_text_chunk WHERE collection_name=:collection AND split_part(source_file,'/',1) IN (:repos)"+
+                    (normalizedSearch==null?"":" AND text_chunk ILIKE :search")+" ORDER BY id LIMIT :limit OFFSET :offset",args,
+                    new org.springframework.jdbc.core.BeanPropertyRowMapper<>(KnowledgeTextChunkPo.class));
+        }
         return mapper.selectByCollection(collectionName, normalizedSearch, Math.max(offset, 0), Math.max(limit, 1));
     }
 

@@ -36,6 +36,16 @@ public interface KnowledgeSourceFileHashMapper {
     List<Map<String, Object>> selectActiveFileCollectionMap();
 
     /**
+     * 查询入库中断残留文件与 collection 映射。
+     */
+    @Select("""
+            SELECT file_path AS "filePath", collection_name AS "collectionName"
+            FROM knowledge_source_file_hash
+            WHERE sync_status = 'SYNCING'
+            """)
+    List<Map<String, Object>> selectInFlightFileCollectionMap();
+
+    /**
      * 查询根目录下各 collection 的 ACTIVE 文件数量。
      */
     @Select("""

@@ -87,6 +87,11 @@ public abstract class AbstractCollectionKbRetriever implements DocumentRetriever
         for (String collection : collections) {
             Retriever.RagChunksResult ragChunksResult = retriever.retrieveRagChunksResult(
                     queryText, collection, boundPartitions(), conversationId);
+            if (ragChunksResult.status() == Retriever.RetrievalStatus.SKIPPED_NO_ACCESS) {
+                // Retriever 已收口权限：无权限不记“检索完成”
+                logRagSkip(conversationId, "noReadableRepositories:" + collection);
+                continue;
+            }
             if (ragChunksResult.status() == Retriever.RetrievalStatus.FAILED) {
                 anyFailure = true;
                 logRagRetrieve(conversationId, collection, ragChunksResult.status(),

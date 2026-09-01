@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -55,8 +56,11 @@ class KnowledgeRepoSyncServiceFullRebuildTest {
     @TempDir
     Path tempRepo;
 
+    /**
+     * 顺序必须是先清哈希再 drop：反序时若在两步之间被打断，哈希仍在会让后续同步判定“无变更”，知识库永久为空。
+     */
     @Test
-    void executeFullRebuild_dropsKnowledgeCollectionsBeforeProbe() {
+    void executeFullRebuild_clearsHashesBeforeDroppingCollections() {
         when(metadataService.getRepoRootPath()).thenReturn(tempRepo);
         when(metadataService.listConfiguredCollectionNames()).thenReturn(Set.of("current_collection"));
         when(metadataService.hasMetadata()).thenReturn(false);
@@ -81,11 +85,11 @@ class KnowledgeRepoSyncServiceFullRebuildTest {
         assertTrue(syncService.executeFullRebuild(() -> true));
 
         InOrder order = inOrder(milvusKnowledgeWriteService, hashTreeService, knowledgeTextChunkService, vectorDatabaseService, vectorDatabaseInit);
+        order.verify(hashTreeService).deleteAll();
+        order.verify(knowledgeTextChunkService).deleteAll();
         order.verify(milvusKnowledgeWriteService).dropCollection("current_collection");
         order.verify(milvusKnowledgeWriteService).dropCollection("old_count_collection");
         order.verify(milvusKnowledgeWriteService).dropCollection("old_file_collection");
-        order.verify(hashTreeService).deleteAll();
-        order.verify(knowledgeTextChunkService).deleteAll();
         order.verify(vectorDatabaseService).resetClient();
         order.verify(vectorDatabaseInit).probeAndConfigure();
         verify(milvusKnowledgeWriteService, never()).dropAllCollections();
@@ -140,10 +144,10 @@ class KnowledgeRepoSyncServiceFullRebuildTest {
     }
 
     /**
-     * 全量重建时，单个文档失败应跳过并继续处理其余文档。
+     * 全量重建时，单个文档失败应跳过并继续处理其余文档，但整体必须报失败，不能对外显示重建成功而知识库残缺。
      */
     @Test
-    void executeFullRebuild_continuesWhenOneDocumentFails() throws Exception {
+    void executeFullRebuild_continuesButReportsFailureWhenOneDocumentFails() throws Exception {
         Path badDocument = tempRepo.resolve("bad.md");
         Path goodDocument = tempRepo.resolve("good.md");
         Files.writeString(badDocument, "# Bad\nbroken");
@@ -184,7 +188,9 @@ class KnowledgeRepoSyncServiceFullRebuildTest {
                 knowledgeTextChunkService,
                 new KnowledgeRepoSyncProgressTracker());
 
-        assertTrue(syncService.executeFullRebuild(() -> true));
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> syncService.executeFullRebuild(() -> true));
+        assertTrue(error.getMessage().contains("未完整入库"));
         verify(milvusKnowledgeWriteService).upsertTextChunks(
                 eq(goodChunks), eq("good.md"), anyString(), eq("knowledge_collection"), eq(List.of("_default")), any());
         verify(hashTreeService).upsertActive(

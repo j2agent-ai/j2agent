@@ -67,6 +67,9 @@ import java.util.function.Consumer;
 @Slf4j
 @Service
 public class ChatService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.service.security.ResourceAccessService resourceAccess;
+
     private static final String ANONYMOUS_USER = "anonymous";
     private static final String FAILURE_ASSISTANT_MESSAGE = "[Error]";
     private final ChatContextService chatContextService;
@@ -150,6 +153,8 @@ public class ChatService {
                         terminated, originalCompleteCall, "emptyMessages", null, null, flushTurnTrace, null);
                 return;
             }
+            resourceAccess.requireAgent(userContext, agentId);
+            if (!userContext.getUserId().trim().equals(userId.trim())) throw new IllegalArgumentException("Identity mismatch");
             final AiAgent aiAgentForConversation = agentRouter.route(agentId);
             final String resolvedAgentId = aiAgentForConversation.getAgentId();
             resolvedAgentIdRef.set(resolvedAgentId);
@@ -277,7 +282,9 @@ public class ChatService {
             agentChatMemoryRef.set(aiAgentForConversation.getChatMemory());
             final ChatMemory agentChatMemory = agentChatMemoryRef.get();
             final boolean universalAssistant = UniversalAssistantConstants.isUniversalAssistant(resolvedAgentId);
-            final List<String> knowledgeCollections = normalizeKnowledgeCollections(request.getKnowledgeCollections());
+            final List<String> knowledgeCollections = request.getKnowledgeRepositoryIds() != null && !request.getKnowledgeRepositoryIds().isEmpty()
+                    ? resourceAccess.selectRepositories(userContext, request.getKnowledgeRepositoryIds())
+                    : resourceAccess.resolveCollections(userContext, normalizeKnowledgeCollections(request.getKnowledgeCollections()), true);
             if (UniversalAssistantConstants.isKnowledgeQaAssistant(resolvedAgentId)
                     && knowledgeCollections.isEmpty()) {
                 throw new IllegalArgumentException("Knowledge collections are required.");
@@ -726,6 +733,11 @@ public class ChatService {
      * 将业务异常映射为前端可识别的 errorCode。
      */
     private static String resolveErrorCode(Throwable t) {
+        for (Throwable cause=t; cause!=null; cause=cause.getCause()) {
+            if(cause instanceof org.springframework.web.server.ResponseStatusException status && status.getReason()!=null
+                    && java.util.Set.of("AGENT_ACCESS_DENIED","KNOWLEDGE_ACCESS_DENIED","KNOWLEDGE_UNAVAILABLE").contains(status.getReason()))
+                return status.getReason();
+        }
         if (t instanceof IllegalArgumentException) {
             String msg = t.getMessage();
             if (StringUtils.isNotBlank(msg)) {

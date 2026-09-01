@@ -27,6 +27,8 @@ import java.util.UUID;
 
 @Service
 public class LoginService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private PermissionWarmup permissionWarmup;
     public static final String LOGIN_ATTRIBUTE = "login";
     private static final String BEARER_PREFIX = "Bearer ";
     private static final String AUTH_PC = "auth-pc";
@@ -186,6 +188,7 @@ public class LoginService {
         userContextBo.setPermissions(List.of());
         userContextBo.setExpireTime(expiresAt.toEpochMilli());
         userLoginContextCache.save(sid, userPo.getId(), userContextBo, expiresIn);
+        if (permissionWarmup != null) permissionWarmup.warm(userPo.getId());
 
         AuthResultDto dto = new AuthResultDto();
         dto.setToken(token);
@@ -247,6 +250,7 @@ public class LoginService {
         userContextBo.setPermissions(List.of());
         userContextBo.setExpireTime(expireTime);
         userLoginContextCache.save(sid, userPo.getId(), userContextBo, ttlSeconds);
+        if (permissionWarmup != null) permissionWarmup.warm(userPo.getId());
         return userContextBo;
     }
 

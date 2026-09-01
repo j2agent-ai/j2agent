@@ -10,6 +10,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
@@ -23,6 +24,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -38,6 +40,8 @@ public class KnowledgeRepoMaintenanceCoordinator {
     private static final Duration STOP_PREVIOUS_TIMEOUT = Duration.ofMinutes(2);
     private static final int STARTUP_PROBE_MAX_ATTEMPTS = 50;
     private static final Duration STARTUP_PROBE_RETRY_INTERVAL = Duration.ofSeconds(5);
+    /** 启动初始化未完成时的重试周期 */
+    private static final long STARTUP_INIT_RETRY_INTERVAL_MILLIS = 300_000L;
 
     private final KnowledgeRepoProperties properties;
     private final KnowledgeRepoMetadataService metadataService;
@@ -53,6 +57,10 @@ public class KnowledgeRepoMaintenanceCoordinator {
     private final AtomicLong exclusiveGeneration = new AtomicLong(0);
     private final AtomicBoolean exclusiveGate = new AtomicBoolean(false);
     private final AtomicBoolean fullRebuildRunning = new AtomicBoolean(false);
+    /** 已提交但未执行完的维护任务数，用于判定“维护中”是否真的还有任务在跑 */
+    private final AtomicInteger pendingTasks = new AtomicInteger(0);
+    /** 启动初始化是否已成功走完，未完成时由定时任务重试 */
+    private final AtomicBoolean startupInitCompleted = new AtomicBoolean(false);
     private volatile KnowledgeRepoMaintenanceTaskType currentTaskType = KnowledgeRepoMaintenanceTaskType.IDLE;
     private volatile String lastFailureMessage;
 
@@ -100,11 +108,17 @@ public class KnowledgeRepoMaintenanceCoordinator {
     }
 
     public boolean isFullRebuildRunning() {
-        return fullRebuildRunning.get();
+        return fullRebuildRunning.get() && pendingTasks.get() > 0;
     }
 
+    /**
+     * 维护中：任务类型处于执行态，且确实还有已提交未结束的任务；两者缺一即视为空闲。
+     */
     public boolean isMaintenanceActive() {
-        KnowledgeRepoMaintenanceTaskType type = currentTaskType;
+        return isRunningTaskType(currentTaskType) && pendingTasks.get() > 0;
+    }
+
+    private static boolean isRunningTaskType(KnowledgeRepoMaintenanceTaskType type) {
         return type != KnowledgeRepoMaintenanceTaskType.IDLE
                 && type != KnowledgeRepoMaintenanceTaskType.FAILED;
     }
@@ -123,6 +137,7 @@ public class KnowledgeRepoMaintenanceCoordinator {
     public void requestStartupInit() {
         if (!properties.isStartupSyncEnabled()) {
             log.info("知识库启动同步已关闭，跳过启动初始化同步");
+            startupInitCompleted.set(true);
             setTaskType(KnowledgeRepoMaintenanceTaskType.IDLE);
             startWatchIfEnabled();
             return;
@@ -183,9 +198,14 @@ public class KnowledgeRepoMaintenanceCoordinator {
      */
     public KnowledgeRepoSyncStatusSnapshot snapshotSyncStatus() {
         KnowledgeRepoSyncProgressTracker.Snapshot progress = progressTracker.snapshot();
+        boolean maintenanceActive = isMaintenanceActive();
+        // 没有在跑的任务却残留执行态时对外统一报空闲，避免前端一直卡在“同步进行中”
+        KnowledgeRepoMaintenanceTaskType reportedTaskType = !maintenanceActive && isRunningTaskType(currentTaskType)
+                ? KnowledgeRepoMaintenanceTaskType.IDLE
+                : currentTaskType;
         return new KnowledgeRepoSyncStatusSnapshot(
-                currentTaskType,
-                isMaintenanceActive(),
+                reportedTaskType,
+                maintenanceActive,
                 isFullRebuildRunning(),
                 isExclusiveSyncActive(),
                 lastFailureMessage,
@@ -350,11 +370,25 @@ public class KnowledgeRepoMaintenanceCoordinator {
         }
         if (syncService.needsEmbeddingFullRebuild()) {
             runStartupFullRebuildIfNeeded();
+            startupInitCompleted.set(currentTaskType != KnowledgeRepoMaintenanceTaskType.FAILED);
             return;
         }
         log.info("应用启动知识库初始化：增量同步");
         syncService.initializeHashCache();
         syncService.executeIncrementalSync(() -> !isExclusiveSyncActive() && !Thread.currentThread().isInterrupted());
+        startupInitCompleted.set(currentTaskType != KnowledgeRepoMaintenanceTaskType.FAILED);
+    }
+
+    /**
+     * 启动初始化未走完（Embedding 未配置、probe 失败、Redis 锁被占等）时定期重试，避免服务重启后长期无人同步。
+     */
+    @Scheduled(initialDelay = STARTUP_INIT_RETRY_INTERVAL_MILLIS, fixedDelay = STARTUP_INIT_RETRY_INTERVAL_MILLIS)
+    public void retryStartupInitIfIncomplete() {
+        if (startupInitCompleted.get() || isMaintenanceActive() || isExclusiveSyncActive()) {
+            return;
+        }
+        log.info("知识库启动初始化尚未完成，重试一次");
+        requestStartupInit();
     }
 
     private void runStartupFullRebuildIfNeeded() {
@@ -555,13 +589,20 @@ public class KnowledgeRepoMaintenanceCoordinator {
 
     private Future<?> submitMaintenanceTaskAndGetFuture(KnowledgeRepoMaintenanceTaskType taskType, Runnable task) {
         synchronized (taskLock) {
-            Future<?> future = maintenanceExecutor.submit(wrapTask(taskType, task));
+            pendingTasks.incrementAndGet();
+            Future<?> future;
+            try {
+                future = maintenanceExecutor.submit(wrapTask(taskType, task, exclusiveGeneration.get()));
+            } catch (RuntimeException e) {
+                pendingTasks.decrementAndGet();
+                throw e;
+            }
             currentTaskFuture = future;
             return future;
         }
     }
 
-    private Runnable wrapTask(KnowledgeRepoMaintenanceTaskType taskType, Runnable task) {
+    private Runnable wrapTask(KnowledgeRepoMaintenanceTaskType taskType, Runnable task, long submittedGeneration) {
         return () -> {
             try {
                 task.run();
@@ -576,8 +617,31 @@ public class KnowledgeRepoMaintenanceCoordinator {
                 log.error("知识库维护任务异常: type={}", taskType, e);
                 lastFailureMessage = e.getMessage();
                 setTaskType(KnowledgeRepoMaintenanceTaskType.FAILED);
+            } finally {
+                if (pendingTasks.decrementAndGet() <= 0) {
+                    releaseStaleRunningState(submittedGeneration);
+                }
             }
         };
+    }
+
+    /**
+     * 队列排空后回收残留门禁与执行态：中断、代次失效等分支会提前 return，不清理会让状态永久卡在“维护中”。
+     */
+    private void releaseStaleRunningState(long submittedGeneration) {
+        synchronized (taskLock) {
+            if (pendingTasks.get() > 0) {
+                return;
+            }
+            if (exclusiveGate.get() && exclusiveGeneration.get() == submittedGeneration) {
+                exclusiveGate.set(false);
+                fullRebuildRunning.set(false);
+            }
+            if (isRunningTaskType(currentTaskType)) {
+                log.warn("维护任务队列已排空，重置残留执行态: type={}", currentTaskType);
+                setTaskType(KnowledgeRepoMaintenanceTaskType.IDLE);
+            }
+        }
     }
 
     private void cancelCurrentTaskAwaitIdle(Duration timeout) {

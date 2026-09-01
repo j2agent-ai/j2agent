@@ -27,6 +27,10 @@ import java.util.List;
 /** 长期 API Key 的创建、校验与 Redis 滑动缓存。 */
 @Service
 public class ApiAccessKeyService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private PermissionWarmup permissionWarmup;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ResourcePermissionCache resourcePermissionCache;
     public static final String KEY_PREFIX = "apikey-";
     private static final Duration CACHE_TTL = Duration.ofMinutes(30);
     private final ApiAccessKeyMapper mapper;
@@ -92,6 +96,7 @@ public class ApiAccessKeyService {
         }
         UserContextBo context = context(row);
         cache(keyHash, context);
+        if (permissionWarmup != null) permissionWarmup.warm(context.getUserId());
         mapper.updateLastUsedTime(row.id(), System.currentTimeMillis());
         return context;
     }
@@ -109,10 +114,9 @@ public class ApiAccessKeyService {
         evict(row.secretHash());
     }
 
-    @Transactional
     public void delete(String id) {
         ApiAccessKeyMapper.KeyRow row = requireKey(id);
-        mapper.deleteApiUser(trimId(row.userId())); // FK ON DELETE CASCADE removes the key.
+        resourcePermissionCache.mutate(trimId(row.userId()), () -> mapper.deleteApiUser(trimId(row.userId())));
         evict(row.secretHash());
     }
 

@@ -1,6 +1,8 @@
 package io.github.jerryt92.j2agent.controller;
 
+import io.github.jerryt92.j2agent.config.security.RequiredRole;
 import io.github.jerryt92.j2agent.constants.CommonConstants;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.service.file.StaticFileService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -14,11 +16,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
 /**
- * 文件读取控制器，提供静态文件与知识库源文件直链访问。
+ * 文件读取控制器：普通用户可访问已授权的来源文件直链。
  */
 @Slf4j
 @RestController
+@RequiredRole(UserRoleEnum.USER)
 public class FileController {
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.service.security.ResourceAccessService resourceAccess;
+
     private final StaticFileService staticFileService;
 
     public FileController(StaticFileService staticFileService) {
@@ -34,7 +40,8 @@ public class FileController {
         if (relativePath == null || relativePath.isBlank()) {
             return ResponseEntity.notFound().build();
         }
-        Resource resource = staticFileService.getStaticFile(relativePath);
+        resourceAccess.requireSource(resourceAccess.current(), relativePath);
+        Resource resource = staticFileService.getKnowledgeRepoFile(relativePath);
         if (resource == null || !resource.exists()) {
             return ResponseEntity.notFound().build();
         }
@@ -47,6 +54,7 @@ public class FileController {
     @GetMapping(CommonConstants.FILE_URL + "repo/**")
     public ResponseEntity<Resource> getKnowledgeRepoFile(HttpServletRequest request) {
         String relativePath = extractSubPath(request, CommonConstants.REPO_FILE_URL);
+        resourceAccess.requireSource(resourceAccess.current(), relativePath);
         if (relativePath == null || relativePath.isBlank()) {
             return ResponseEntity.notFound().build();
         }

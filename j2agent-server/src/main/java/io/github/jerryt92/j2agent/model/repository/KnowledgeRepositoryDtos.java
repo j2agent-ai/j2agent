@@ -20,6 +20,10 @@ public final class KnowledgeRepositoryDtos {
     @Data
     public static class Item {
         private String id;
+        private String creatorUserId;
+        private Boolean isPublic;
+        private Boolean canManage;
+        private Boolean canShare;
         private String repoCode;
         private String type;
         private String protocol;
@@ -77,6 +81,7 @@ public final class KnowledgeRepositoryDtos {
 
     @Data
     public static class SyncResponse {
+        private String taskId;
         private Boolean success;
         private String message;
     }

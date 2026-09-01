@@ -24,6 +24,12 @@ import java.util.stream.Collectors;
 @Slf4j
 @Component
 public class AgentRouter {
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.service.security.ResourceAccessService resourceAccess;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate aclJdbc;
+
 
     private final ApplicationContext applicationContext;
     private volatile Map<String, AiAgent> agents = Map.of();
@@ -54,6 +60,13 @@ public class AgentRouter {
             next.put(agentId, agent);
         }
         this.agents = Map.copyOf(next);
+        if (aclJdbc != null) {
+            // First registration after upgrade preserves access once, including built-in agents.
+            Boolean migrated = aclJdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ai_properties WHERE property_name='resource-acl-agents-initialized')", Boolean.class);
+            long now = System.currentTimeMillis();
+            for (String id : next.keySet()) aclJdbc.update("INSERT INTO agent_access_config(agent_id,is_public,created_at,updated_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING", id, !Boolean.TRUE.equals(migrated), now, now);
+            aclJdbc.update("INSERT INTO ai_properties(property_name,property_value) VALUES ('resource-acl-agents-initialized','true') ON CONFLICT DO NOTHING");
+        }
     }
 
     /**
@@ -73,7 +86,9 @@ public class AgentRouter {
      */
     public AgentInfoList listRegisteredAgents(String language) {
         String locale = I18nLocaleUtils.normalizeLanguage(language);
+        java.util.Set<String> allowed = resourceAccess.allowedAgents(resourceAccess.current());
         List<AgentInfoDto> items = agents.values().stream()
+                .filter(a -> resourceAccess.current().isAdmin() || allowed.contains(a.getAgentId()))
                 .filter(a -> !UniversalAssistantConstants.isUniversalAssistant(a.getAgentId()))
                 .filter(a -> !UniversalAssistantConstants.isKnowledgeQaAssistant(a.getAgentId()))
                 .sorted(Comparator.comparingInt(AiAgent::getSort)

@@ -33,4 +33,9 @@ public class UserContextBo {
     public boolean isAdmin() {
         return hasAccess(UserRoleEnum.ADMIN);
     }
+
+    /** 是否为知识库管理员（含系统管理员）。 */
+    public boolean isKnowledgeAdmin() {
+        return hasAccess(UserRoleEnum.KNOWLEDGE_ADMIN);
+    }
 }

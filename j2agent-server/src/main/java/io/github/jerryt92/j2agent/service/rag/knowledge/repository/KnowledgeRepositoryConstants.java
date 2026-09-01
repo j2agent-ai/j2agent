@@ -12,6 +12,7 @@ public final class KnowledgeRepositoryConstants {
     public static final String STATUS_SYNCED = "SYNCED";
     public static final String STATUS_FAILED = "FAILED";
     public static final String STATUS_DIRECTORY_MISSING = "DIRECTORY_MISSING";
+    public static final String STATUS_GLOBAL_REBUILDING = "GLOBAL_REBUILDING";
     public static final int DEFAULT_UPDATE_INTERVAL_MINUTES = 60;
     public static final int DEFAULT_MIN_HEADING_LEVEL = 3;
     public static final boolean DEFAULT_FILENAME_AS_TITLE = true;

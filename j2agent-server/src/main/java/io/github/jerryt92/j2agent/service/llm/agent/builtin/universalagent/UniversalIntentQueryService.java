@@ -284,11 +284,16 @@ public class UniversalIntentQueryService {
      * @param turnId         回合 ID，用于中断检查；可为 null
      */
     public String queryIntentAgents(String conversationId, String routingQuery, String turnId) {
+        // Legacy callers do not receive an unfiltered registry.
+        return queryIntentAgents(conversationId, routingQuery, turnId, List.of());
+    }
+
+    public String queryIntentAgents(String conversationId, String routingQuery, String turnId, List<AiAgent> candidates) {
         throwIfCancelled(turnId);
         if (StringUtils.isBlank(routingQuery)) {
             return "[]";
         }
-        List<AiAgent> candidates = agentRouter.listCallableSubAgents();
+        // Candidates are supplied by the authenticated orchestrator.
         if (candidates.isEmpty()) {
             return "[]";
         }
