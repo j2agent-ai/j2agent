@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ext.ResourcePermissionMapper">
+
+  <select id="selectAgentPermissions"
+          resultType="io.github.jerryt92.j2agent.model.po.ResourcePermissionRow">
+    SELECT agent_id AS resource_id, permission_level, expires_at
+    FROM user_agent_permission
+    WHERE user_id = #{userId}
+      AND (expires_at IS NULL OR expires_at &gt; #{now})
+  </select>
+
+  <select id="selectKnowledgePermissions"
+          resultType="io.github.jerryt92.j2agent.model.po.ResourcePermissionRow">
+      SELECT knowledge_repository_id AS resource_id, permission_level, expires_at
+      FROM user_knowledge_permission
+      WHERE user_id = #{userId}
+        AND (expires_at IS NULL OR expires_at &gt; #{now})
+  </select>
+
+</mapper>
