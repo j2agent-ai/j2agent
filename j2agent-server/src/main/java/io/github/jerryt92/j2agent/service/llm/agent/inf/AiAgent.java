@@ -364,6 +364,7 @@ public abstract class AiAgent {
         }
         UserMessage userMessage = userMessageBuilder.build();
         return Flux.defer(() -> {
+            io.github.jerryt92.j2agent.service.security.AgentAccessContext.bind(context.conversationId(), context.userContext());
             UserContextBo previousUserContext = CURRENT_USER_CONTEXT.get();
             bindCurrentUserContext(context.userContext());
             ReactCompatibleMessageChatMemoryAdvisor.setConversationId(context.conversationId());
@@ -376,10 +377,12 @@ public abstract class AiAgent {
                 messages.add(userMessage);
                 return agent.stream(messages, runnableConfig)
                         .doFinally(signalType -> {
+                            io.github.jerryt92.j2agent.service.security.AgentAccessContext.clear(context.conversationId());
                             restoreCurrentUserContext(previousUserContext);
                             ReactCompatibleMessageChatMemoryAdvisor.clear();
                         });
-            } catch (GraphRunnerException ex) {
+            } catch (Exception ex) {
+                io.github.jerryt92.j2agent.service.security.AgentAccessContext.clear(context.conversationId());
                 restoreCurrentUserContext(previousUserContext);
                 ReactCompatibleMessageChatMemoryAdvisor.clear();
                 return Flux.error(ex);

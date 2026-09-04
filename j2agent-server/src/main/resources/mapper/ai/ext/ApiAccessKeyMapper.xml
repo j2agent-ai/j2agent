@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ApiAccessKeyMapper">
+  <sql id="keyColumns">k.id, k.user_id AS userId, k.key_name AS keyName, k.key_prefix AS keyPrefix,
+    k.secret_hash AS secretHash, k.create_time AS createTime, k.last_used_time AS lastUsedTime,
+    u.username, u.role, u.account_type AS accountType, u.password_login_enabled AS passwordLoginEnabled</sql>
+  <select id="findById" resultType="io.github.jerryt92.j2agent.mapper.ApiAccessKeyMapper$KeyRow">
+    SELECT <include refid="keyColumns"/> FROM api_access_key k JOIN app_user u ON trim(u.id)=trim(k.user_id) WHERE k.id=#{id}
+  </select>
+  <select id="findByKeyPrefix" resultType="io.github.jerryt92.j2agent.mapper.ApiAccessKeyMapper$KeyRow">
+    SELECT <include refid="keyColumns"/> FROM api_access_key k JOIN app_user u ON trim(u.id)=trim(k.user_id) WHERE k.key_prefix=#{keyPrefix}
+  </select>
+  <select id="list" resultType="io.github.jerryt92.j2agent.mapper.ApiAccessKeyMapper$KeyRow">
+    SELECT <include refid="keyColumns"/> FROM api_access_key k JOIN app_user u ON trim(u.id)=trim(k.user_id) ORDER BY k.create_time DESC
+  </select>
+  <insert id="insert">INSERT INTO api_access_key (id, user_id, key_name, key_prefix, secret_hash, create_time)
+                      VALUES (#{id}, #{userId}, #{keyName}, #{keyPrefix}, #{secretHash}, #{createTime})</insert>
+  <update id="updateLastUsedTime">UPDATE api_access_key SET last_used_time=#{lastUsedTime} WHERE id=#{id}</update>
+  <update id="updateApiUserRole">UPDATE app_user SET role=#{role} WHERE trim(id)=#{userId}
+    AND account_type = 'API'</update>
+  <delete id="deleteApiUser">DELETE FROM app_user WHERE trim(id)=#{userId}
+    AND account_type = 'API'</delete>
+  <select id="isApiUser" resultType="boolean">SELECT EXISTS(SELECT 1 FROM app_user WHERE trim(id)=#{userId} AND account_type = 'API')</select>
+  <select id="isPasswordLoginEnabled" resultType="boolean">SELECT password_login_enabled FROM app_user WHERE trim(id)=#{userId}</select>
+</mapper>

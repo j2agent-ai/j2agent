@@ -8,6 +8,8 @@ import lombok.Data;
 @Data
 public class KnowledgeRepositoryPo {
     private String id;
+    private String creatorUserId;
+    private Boolean isPublic = false;
     private String repoCode;
     private String type;
     private String protocol;

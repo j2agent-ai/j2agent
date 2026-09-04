@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ext.KnowledgeRepositoryTaskMapper">
+  <select id="selectRecentByRepository" resultType="map">
+      SELECT id,
+             operation,
+             status,
+             error_message AS "errorMessage",
+             created_at    AS "createdAt",
+             updated_at    AS "updatedAt"
+      FROM knowledge_repository_task
+      WHERE repository_id = #{repositoryId}
+      ORDER BY created_at DESC LIMIT 50
+  </select>
+</mapper>

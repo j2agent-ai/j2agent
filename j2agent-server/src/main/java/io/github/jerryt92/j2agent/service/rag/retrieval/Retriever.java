@@ -4,23 +4,30 @@ import io.github.jerryt92.j2agent.model.EmbeddingModel;
 import io.github.jerryt92.j2agent.model.KnowledgeRetrieveItemDto;
 import io.github.jerryt92.j2agent.model.Translator;
 import io.github.jerryt92.j2agent.model.po.KnowledgeTextChunkPo;
+import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.service.PropertiesService;
 import io.github.jerryt92.j2agent.service.embedding.EmbeddingService;
 import io.github.jerryt92.j2agent.logging.llm.AgentRunEventType;
 import io.github.jerryt92.j2agent.logging.llm.AgentRunLogger;
 import io.github.jerryt92.j2agent.service.rag.inf.AbstractCollectionKbRetriever;
 import io.github.jerryt92.j2agent.service.rag.RagSourcePathUtils;
+import io.github.jerryt92.j2agent.service.rag.knowledge.KnowledgeCollectionSelection;
 import io.github.jerryt92.j2agent.service.rag.knowledge.KnowledgeTextChunkService;
 import io.github.jerryt92.j2agent.service.rag.vdb.VectorDatabaseService;
+import io.github.jerryt92.j2agent.service.security.AgentAccessContext;
+import io.github.jerryt92.j2agent.service.security.KnowledgeReadScope;
+import io.github.jerryt92.j2agent.service.security.ResourceAccessService;
 import io.github.jerryt92.j2agent.utils.MathCalculatorUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.rag.Query;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -35,7 +42,6 @@ import java.util.concurrent.CompletionException;
 @Slf4j
 @Service
 public class Retriever {
-
     /**
      * 检索日志中查询文本预览最大字符数，避免日志过长
      */
@@ -48,13 +54,16 @@ public class Retriever {
     private final PropertiesService propertiesService;
     private final QueryChunker queryChunker;
     private final KnowledgeTextChunkService knowledgeTextChunkService;
+    private final ResourceAccessService resourceAccess;
 
     /**
-     * RAG 检索结果状态：区分正常、空命中与向量库失败降级。
+     * RAG 检索结果状态：区分正常、空命中、无权限跳过与向量库失败降级。
      */
     public enum RetrievalStatus {
         SUCCESS,
         EMPTY,
+        /** 当前用户对目标仓库无读权限，未调用底层检索。 */
+        SKIPPED_NO_ACCESS,
         FAILED
     }
 
@@ -62,12 +71,14 @@ public class Retriever {
                      VectorDatabaseService vectorDatabaseService,
                      PropertiesService propertiesService,
                      QueryChunker queryChunker,
-                     KnowledgeTextChunkService knowledgeTextChunkService) {
+                     KnowledgeTextChunkService knowledgeTextChunkService,
+                     ResourceAccessService resourceAccess) {
         this.embeddingService = embeddingService;
         this.vectorDatabaseService = vectorDatabaseService;
         this.propertiesService = propertiesService;
         this.queryChunker = queryChunker;
         this.knowledgeTextChunkService = knowledgeTextChunkService;
+        this.resourceAccess = resourceAccess;
     }
 
     /**
@@ -94,9 +105,52 @@ public class Retriever {
     }
 
     /**
-     * 混合检索核心：超长 query 多段向量化与融合，返回已归一化、条数不超过 topK 的命中列表。
+     * 权限收口后再检索：用本轮原始用户计算可读仓库，无权限则跳过向量检索与正文回填。
      */
     private SearchOutcome searchAndNormalize(String queryText,
+                                             KnowledgeRetrieveItemDto.MetricTypeEnum metricType, int topK, String collection,
+                                             List<String> partitionNames, String logPrefix, String conversationId) {
+        KnowledgeCollectionSelection.Parsed parsed = KnowledgeCollectionSelection.parse(collection);
+        if (parsed == null) {
+            return skippedNoAccess();
+        }
+        UserContextBo user = StringUtils.isBlank(conversationId)
+                ? resourceAccess.current()
+                : ResourceAccessService.requireIdentity(AgentAccessContext.get(conversationId));
+        List<String> selections;
+        try {
+            selections = resourceAccess.resolveCollections(user, List.of(collection), parsed.repoCode() != null);
+        } catch (ResponseStatusException exception) {
+            // 对话 RAG 无权限时跳过，避免打断会话；HTTP 命中测试仍抛出 403
+            if (StringUtils.isNotBlank(conversationId) && exception.getStatusCode() == HttpStatus.FORBIDDEN) {
+                return skippedNoAccess();
+            }
+            throw exception;
+        }
+        if (selections.isEmpty()) {
+            return skippedNoAccess();
+        }
+        List<String> prefixes = new ArrayList<>();
+        for (String selection : selections) {
+            KnowledgeCollectionSelection.Parsed allowed = KnowledgeCollectionSelection.parse(selection);
+            if (allowed != null && StringUtils.isNotBlank(allowed.repoCode())) {
+                prefixes.add(allowed.repoCode() + "/");
+            }
+        }
+        if (prefixes.isEmpty()) {
+            return skippedNoAccess();
+        }
+        try (KnowledgeReadScope ignored = new KnowledgeReadScope(prefixes)) {
+            return searchAndNormalizeScoped(queryText, metricType, topK, parsed.collection(), partitionNames, logPrefix, conversationId);
+        }
+    }
+
+    /** 无可读仓库时的统一跳过结果，不进入底层检索。 */
+    private static SearchOutcome skippedNoAccess() {
+        return new SearchOutcome(Collections.emptyList(), 0, 0, RetrievalStatus.SKIPPED_NO_ACCESS, null);
+    }
+
+    private SearchOutcome searchAndNormalizeScoped(String queryText,
                                              KnowledgeRetrieveItemDto.MetricTypeEnum metricType,
                                              int topK,
                                              String collection,
@@ -128,16 +182,24 @@ public class Retriever {
         } else {
             executionResult = hybridSearchMultiChunk(chunks, collection, topK, metricTypeName, weights, effectivePartitions);
         }
-        List<EmbeddingModel.EmbeddingsQueryItem> rawHits = executionResult.items();
-        int rawHitCount = rawHits == null ? 0 : rawHits.size();
         if (executionResult.failed()) {
             return new SearchOutcome(Collections.emptyList(), 0, queryChunks, RetrievalStatus.FAILED, executionResult.failureMessage());
         }
-        if (rawHits == null || rawHits.isEmpty()) {
+        List<EmbeddingModel.EmbeddingsQueryItem> rawHits = executionResult.items() == null
+                ? List.of()
+                : executionResult.items().stream()
+                .filter(item -> KnowledgeReadScope.permits(item.getSourceFile()))
+                .toList();
+        if (rawHits.isEmpty()) {
             logSearchEmpty(logPrefix, conversationId, collection);
             return new SearchOutcome(Collections.emptyList(), 0, queryChunks, RetrievalStatus.EMPTY, null);
         }
-        hydrateTextChunks(rawHits);
+        rawHits = hydrateTextChunks(rawHits);
+        int rawHitCount = rawHits.size();
+        if (rawHits.isEmpty()) {
+            logSearchEmpty(logPrefix, conversationId, collection);
+            return new SearchOutcome(Collections.emptyList(), 0, queryChunks, RetrievalStatus.EMPTY, null);
+        }
         boolean multiChunk = queryChunks > 1;
         SearchExecutionResult normalizeResult = normalizeHitScores(rawHits, metricType, weights, collection, effectivePartitions, multiChunk, chunks.getFirst(), metricTypeName);
         if (normalizeResult.failed()) {
@@ -247,37 +309,46 @@ public class Retriever {
                 + "|" + (item.getHeadingPath() != null ? item.getHeadingPath() : "");
     }
 
-    private void hydrateTextChunks(List<EmbeddingModel.EmbeddingsQueryItem> items) {
+    /**
+     * 按 textChunkId 回填完整正文；DB 中的 sourceFile 不可读时丢弃该命中，避免私有库正文泄漏。
+     */
+    private List<EmbeddingModel.EmbeddingsQueryItem> hydrateTextChunks(List<EmbeddingModel.EmbeddingsQueryItem> items) {
         if (items == null || items.isEmpty()) {
-            return;
+            return List.of();
         }
         List<String> textChunkIds = items.stream()
                 .map(EmbeddingModel.EmbeddingsQueryItem::getTextChunkId)
                 .filter(StringUtils::isNotBlank)
                 .distinct()
                 .toList();
-        if (textChunkIds.isEmpty()) {
-            return;
-        }
-        Map<String, KnowledgeTextChunkPo> chunkMap = knowledgeTextChunkService.getByIds(textChunkIds);
+        Map<String, KnowledgeTextChunkPo> chunkMap = textChunkIds.isEmpty()
+                ? Map.of()
+                : knowledgeTextChunkService.getByIds(textChunkIds);
+        List<EmbeddingModel.EmbeddingsQueryItem> allowed = new ArrayList<>();
         for (EmbeddingModel.EmbeddingsQueryItem item : items) {
             KnowledgeTextChunkPo po = chunkMap.get(item.getTextChunkId());
-            if (po == null) {
-                continue;
-            }
-            item.setTextChunk(po.getTextChunk());
-            if (StringUtils.isBlank(item.getHeadingPath())) {
-                item.setHeadingPath(po.getHeadingPath());
-            }
-            if (StringUtils.isNotBlank(po.getSourceFile())) {
-                boolean milvusBlank = StringUtils.isBlank(item.getSourceFile());
-                boolean milvusNotKb = !milvusBlank
-                        && !RagSourcePathUtils.isKbSourceRelativePath(item.getSourceFile());
-                if (milvusBlank || milvusNotKb) {
-                    item.setSourceFile(po.getSourceFile());
+            if (po != null) {
+                if (StringUtils.isNotBlank(po.getSourceFile()) && !KnowledgeReadScope.permits(po.getSourceFile())) {
+                    continue;
+                }
+                item.setTextChunk(po.getTextChunk());
+                if (StringUtils.isBlank(item.getHeadingPath())) {
+                    item.setHeadingPath(po.getHeadingPath());
+                }
+                if (StringUtils.isNotBlank(po.getSourceFile())) {
+                    boolean milvusBlank = StringUtils.isBlank(item.getSourceFile());
+                    boolean milvusNotKb = !milvusBlank
+                            && !RagSourcePathUtils.isKbSourceRelativePath(item.getSourceFile());
+                    if (milvusBlank || milvusNotKb) {
+                        item.setSourceFile(po.getSourceFile());
+                    }
                 }
             }
+            if (KnowledgeReadScope.permits(item.getSourceFile())) {
+                allowed.add(item);
+            }
         }
+        return allowed;
     }
 
     private static float rawHybridScore(EmbeddingModel.EmbeddingsQueryItem item, float denseWeight, float sparseWeight) {
@@ -415,6 +486,10 @@ public class Retriever {
         int safeTopK = topK == null ? params.topK() : topK;
         KnowledgeRetrieveItemDto.MetricTypeEnum metricType = params.metricType();
         SearchOutcome outcome = searchAndNormalize(queryText, metricType, safeTopK, collection, partitionNames, "RAG知识检索", null);
+        if (outcome.status() == RetrievalStatus.SKIPPED_NO_ACCESS) {
+            log.info("RAG知识检索跳过: collection={}, reason=noReadableRepositories", collection);
+            return retrieveResult;
+        }
         for (EmbeddingModel.EmbeddingsQueryItem item : outcome.items()) {
             String calculateExpressionResult = MathCalculatorUtil.calculateExpression(item.getScore() + params.metricScoreCompareExpr());
             retrieveResult.add(Translator.translateToEmbeddingsQueryItemDto(

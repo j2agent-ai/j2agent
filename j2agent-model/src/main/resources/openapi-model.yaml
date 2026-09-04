@@ -220,7 +220,7 @@ components:
           description: 用户名
         role:
           type: integer
-          description: 用户角色，1-管理员，2-知识库管理员，3-普通用户
+          description: 用户角色，1-系统管理员，2-知识库管理员，3-普通用户
         createTime:
           type: integer
           format: int64
@@ -250,7 +250,7 @@ components:
           description: 密码
         role:
           type: integer
-          description: 用户角色，1-管理员，2-知识库管理员，3-普通用户
+          description: 用户角色，1-系统管理员，2-知识库管理员，3-普通用户
     UserRoleUpdateRequestDto:
       type: object
       properties:
@@ -259,7 +259,7 @@ components:
           description: 用户ID
         role:
           type: integer
-          description: 用户角色，1-管理员，2-知识库管理员，3-普通用户
+          description: 用户角色，1-系统管理员，2-知识库管理员，3-普通用户
     UserPasswordUpdateRequestDto:
       type: object
       properties:
@@ -276,12 +276,12 @@ components:
       properties:
         keyName: { type: string, description: API Key 显示名称 }
         username: { type: string, description: 新建 API 专用用户名 }
-        role: { type: integer, description: 用户角色，1-管理员，2-知识库管理员，3-普通用户 }
+        role: { type: integer, description: 用户角色，1-系统管理员，2-知识库管理员，3-普通用户 }
     ApiKeyRoleUpdateRequestDto:
       type: object
       required: [role]
       properties:
-        role: { type: integer, description: 用户角色，1-管理员，2-知识库管理员，3-普通用户 }
+        role: { type: integer, description: 用户角色，1-系统管理员，2-知识库管理员，3-普通用户 }
     ApiKeyDto:
       type: object
       properties:
@@ -543,6 +543,9 @@ components:
     KnowledgeCollectionDto:
       type: object
       properties:
+        repositoryId:
+          type: string
+          description: 知识仓库ID，聊天请求优先使用此ID
         collection:
           type: string
           description: Milvus collection 名称，用于检索请求
@@ -999,6 +1002,11 @@ components:
         manualOrchestrateAgentId:
           type: string
           description: 通用助手手动直连的子智能体 ID；仅 universal_assistant 生效，传入后跳过编排决策
+        knowledgeRepositoryIds:
+          type: array
+          description: 本轮明确选择的知识仓库ID；每轮重新校验读取权限
+          items:
+            type: string
         knowledgeCollections:
           type: array
           description: 通用知识库问答助手本轮选择的知识库 collection 列表；仅 knowledge_qa_assistant 生效

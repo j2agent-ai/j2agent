@@ -18,7 +18,6 @@ import java.util.stream.Collectors;
  */
 @Service
 public class KnowledgeTextChunkService {
-
     private final KnowledgeTextChunkMapper mapper;
 
     public KnowledgeTextChunkService(KnowledgeTextChunkMapper mapper) {
@@ -65,7 +64,12 @@ public class KnowledgeTextChunkService {
             return Collections.emptyMap();
         }
         Map<String, KnowledgeTextChunkPo> result = new LinkedHashMap<>();
-        for (KnowledgeTextChunkPo po : mapper.selectByIds(distinctIds)) {
+        var repoCodes = io.github.jerryt92.j2agent.service.security.KnowledgeReadScope.repositoryCodes();
+        List<KnowledgeTextChunkPo> rows;
+        if (repoCodes == null) rows = mapper.selectByIds(distinctIds);
+        else if (repoCodes.isEmpty()) rows = List.of();
+        else rows = mapper.selectByIdsInRepositories(distinctIds, repoCodes);
+        for (KnowledgeTextChunkPo po : rows) {
             result.put(po.getId(), po);
         }
         return result;
@@ -79,6 +83,12 @@ public class KnowledgeTextChunkService {
             return List.of();
         }
         String normalizedSearch = StringUtils.trimToNull(search);
+        var repos = io.github.jerryt92.j2agent.service.security.KnowledgeReadScope.repositoryCodes();
+        if (repos != null) {
+            if (repos.isEmpty()) return List.of();
+            return mapper.selectByCollectionInRepositories(collectionName, normalizedSearch, repos,
+                    Math.max(offset, 0), Math.max(1, Math.min(limit, 1000)));
+        }
         return mapper.selectByCollection(collectionName, normalizedSearch, Math.max(offset, 0), Math.max(limit, 1));
     }
 

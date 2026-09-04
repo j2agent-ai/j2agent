@@ -22,6 +22,8 @@ import java.util.Map;
 @Service
 public class KnowledgeRepoHashTreeService {
     private static final String STATUS_ACTIVE = "ACTIVE";
+    /** 入库进行中：写向量前落盘，成功后翻为 ACTIVE；残留即代表上一轮在该文件上被打断 */
+    private static final String STATUS_SYNCING = "SYNCING";
     private final KnowledgeSourceFileHashMapper mapper;
 
     public KnowledgeRepoHashTreeService(KnowledgeSourceFileHashMapper mapper) {
@@ -77,12 +79,36 @@ public class KnowledgeRepoHashTreeService {
     }
 
     /**
-     * 写入或更新 ACTIVE 文件状态。
+     * 加载入库中断残留文件到 collection 的映射。
      */
+    public Map<String, String> loadInFlightFileCollections() {
+        Map<String, String> result = new HashMap<>();
+        for (Map<String, Object> row : mapper.selectInFlightFileCollectionMap()) {
+            Object filePath = row.get("filePath");
+            Object collectionName = row.get("collectionName");
+            if (filePath != null && collectionName != null) {
+                result.put(filePath.toString(), collectionName.toString());
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 写向量前登记为入库中，使中断残留的向量可被下一轮识别并清理。
+     */
+    public void markSyncing(Path filePath, String sha256, String metadataConfigHash, String collectionName, List<String> partitionNames, long scanTime) {
+        mapper.upsert(buildPo(filePath, sha256, metadataConfigHash, collectionName, partitionNames, 0, 0L, scanTime, STATUS_SYNCING));
+    }
+
     /**
      * 写入或更新 ACTIVE 文件状态（含 Milvus 分区配置 JSON）。
      */
     public void upsertActive(Path filePath, String sha256, String metadataConfigHash, String collectionName, List<String> partitionNames, int knowledgeCount, long fileSizeBytes, long scanTime) {
+        mapper.upsert(buildPo(filePath, sha256, metadataConfigHash, collectionName, partitionNames, knowledgeCount, fileSizeBytes, scanTime, STATUS_ACTIVE));
+    }
+
+    private KnowledgeSourceFileHashPo buildPo(Path filePath, String sha256, String metadataConfigHash, String collectionName,
+                                              List<String> partitionNames, int knowledgeCount, long fileSizeBytes, long scanTime, String syncStatus) {
         KnowledgeSourceFileHashPo po = new KnowledgeSourceFileHashPo();
         String relativePath = normalizeRepoRelativePath(filePath);
         // 使用 UUIDv7 作为主键，避免自增主键在分布式场景下的冲突。
@@ -96,10 +122,10 @@ public class KnowledgeRepoHashTreeService {
         po.setKnowledgeCount(knowledgeCount);
         po.setFileSizeBytes(fileSizeBytes);
         po.setLastScanTime(scanTime);
-        po.setSyncStatus(STATUS_ACTIVE);
+        po.setSyncStatus(syncStatus);
         po.setCreatedAt(scanTime);
         po.setUpdatedAt(scanTime);
-        mapper.upsert(po);
+        return po;
     }
 
     /**

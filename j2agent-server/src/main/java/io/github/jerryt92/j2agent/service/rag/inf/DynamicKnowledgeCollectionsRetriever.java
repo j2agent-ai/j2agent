@@ -70,7 +70,12 @@ public class DynamicKnowledgeCollectionsRetriever implements DocumentRetriever {
         boolean anyFailure = false;
         for (KnowledgeCollectionSelection.Parsed selection : selections) {
             Retriever.RagChunksResult result =
-                    retriever.retrieveRagChunksResult(queryText, selection.collection(), null, conversationId);
+                    retriever.retrieveRagChunksResult(queryText, selection.rawValue(), null, conversationId);
+            if (result.status() == Retriever.RetrievalStatus.SKIPPED_NO_ACCESS) {
+                // Retriever 已收口权限：无权限不记“检索完成”
+                logRagSkip(conversationId, "noReadableRepositories:" + selection.rawValue());
+                continue;
+            }
             if (result.status() == Retriever.RetrievalStatus.FAILED) {
                 anyFailure = true;
                 logRagRetrieve(conversationId, selection.rawValue(), result.status(), 0, 0, result.failureMessage(), List.of());

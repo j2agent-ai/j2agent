@@ -245,6 +245,7 @@ public class MilvusService implements VectorDatabaseService {
         validateQueryVectorDimension(targetCollectionName, queryVector);
         FloatVec floatVec = new FloatVec(queryVector);
         var searchBuilder = SearchReq.builder()
+                .filter(io.github.jerryt92.j2agent.service.security.KnowledgeReadScope.filter())
                 .collectionName(targetCollectionName)
                 .data(List.of(floatVec))
                 .topK(topK)
@@ -393,7 +394,18 @@ public class MilvusService implements VectorDatabaseService {
     /**
      * 确保 collection 存在且 embedding 字段维度与 {@link #lastDimension} 一致。
      */
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.redisson.api.RedissonClient maintenanceRedis;
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.config.redis.RedisKeyNamespaces maintenanceKeys;
+
     private void ensureCollectionReady(String targetCollectionName) {
+        var lock=maintenanceRedis.getLock(maintenanceKeys.key("knowledge-repo:collection:"+targetCollectionName));
+        lock.lock();
+        try { ensureCollectionReadyLocked(targetCollectionName); }
+        finally { if(lock.isHeldByCurrentThread()) lock.unlock(); }
+    }
+    private void ensureCollectionReadyLocked(String targetCollectionName) {
         if (lastDimension == null) {
             throw new IllegalStateException("未初始化向量维度，无法创建 collection: " + targetCollectionName);
         }
@@ -405,11 +417,7 @@ public class MilvusService implements VectorDatabaseService {
         if (schemaDimension == lastDimension) {
             return;
         }
-        log.warn("Collection {} schema dimension={} 与当前 Milvus 期望维度={} 不一致，drop 后重建",
-                targetCollectionName, schemaDimension, lastDimension);
-        dropCollection(targetCollectionName);
-        resetClient();
-        createCollection(targetCollectionName, lastDimension);
+        throw new IllegalStateException("Collection dimension mismatch; an administrator must run a global embedding rebuild: " + targetCollectionName);
     }
 
     private void assertCollectionSchemaDimension(String targetCollectionName, int expectedDimension) {
@@ -641,6 +649,7 @@ public class MilvusService implements VectorDatabaseService {
             }
         }
         AnnSearchReq denseSearchReq = AnnSearchReq.builder()
+                .expr(io.github.jerryt92.j2agent.service.security.KnowledgeReadScope.filter())
                 .vectorFieldName(MilvusSchemaDefinition.FIELD_EMBEDDING)
                 .metricType(denseMetricType)
                 .vectors(List.of(new FloatVec(queryVector)))
@@ -648,6 +657,7 @@ public class MilvusService implements VectorDatabaseService {
                 .params("{}")
                 .build();
         AnnSearchReq sparseSearchReq = AnnSearchReq.builder()
+                .expr(io.github.jerryt92.j2agent.service.security.KnowledgeReadScope.filter())
                 .vectorFieldName(MilvusSchemaDefinition.FIELD_SPARSE)
                 .metricType(IndexParam.MetricType.BM25)
                 .vectors(List.of(new EmbeddedText(queryText)))
@@ -664,6 +674,7 @@ public class MilvusService implements VectorDatabaseService {
         SearchResp searchResp = client.hybridSearch(hybridBuilder.build());
         int scoreTopK = Math.max(topK, 50);
         var denseSearchBuilder = SearchReq.builder()
+                .filter(io.github.jerryt92.j2agent.service.security.KnowledgeReadScope.filter())
                 .collectionName(targetCollectionName)
                 .data(List.of(new FloatVec(queryVector)))
                 .topK(scoreTopK)
@@ -675,6 +686,7 @@ public class MilvusService implements VectorDatabaseService {
         applyPartitionNames(denseSearchBuilder, partitionNames);
         SearchResp denseResp = client.search(denseSearchBuilder.build());
         var sparseSearchBuilder = SearchReq.builder()
+                .filter(io.github.jerryt92.j2agent.service.security.KnowledgeReadScope.filter())
                 .collectionName(targetCollectionName)
                 .data(List.of(new EmbeddedText(queryText)))
                 .annsField(MilvusSchemaDefinition.FIELD_SPARSE)
@@ -707,6 +719,7 @@ public class MilvusService implements VectorDatabaseService {
      */
     private List<EmbeddingModel.EmbeddingsQueryItem> sparseRetrieval(String targetCollectionName, String queryText, int topK, List<String> partitionNames) {
         var searchBuilder = SearchReq.builder()
+                .filter(io.github.jerryt92.j2agent.service.security.KnowledgeReadScope.filter())
                 .collectionName(targetCollectionName)
                 .data(List.of(new EmbeddedText(queryText)))
                 .annsField(MilvusSchemaDefinition.FIELD_SPARSE)

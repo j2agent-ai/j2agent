@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.SimpleRagCollectionStateMapper">
+  <select id="selectByCollectionName" resultType="io.github.jerryt92.j2agent.model.po.SimpleRagCollectionStatePo">
+      SELECT id,
+             collection_name AS collectionName,
+             owner_agent_id  AS ownerAgentId,
+             sync_status     AS syncStatus,
+             document_count  AS documentCount,
+             error_message   AS errorMessage,
+             created_at      AS createdAt,
+             updated_at      AS updatedAt
+      FROM simple_rag_collection_state
+      WHERE collection_name = #{collectionName}
+  </select>
+  <select id="selectAllCollectionNames" resultType="string">
+    SELECT collection_name FROM simple_rag_collection_state
+  </select>
+  <insert id="upsert">
+    INSERT INTO simple_rag_collection_state
+      (id, collection_name, owner_agent_id, sync_status, document_count, error_message, created_at, updated_at)
+    VALUES (#{id}, #{collectionName}, #{ownerAgentId}, #{syncStatus}, #{documentCount}, #{errorMessage}, #{createdAt}, #{updatedAt})
+    ON CONFLICT (collection_name) DO UPDATE SET owner_agent_id = EXCLUDED.owner_agent_id,
+      sync_status = EXCLUDED.sync_status, document_count = EXCLUDED.document_count,
+      error_message = EXCLUDED.error_message, updated_at = EXCLUDED.updated_at
+  </insert>
+  <delete id="deleteByCollectionName">
+    DELETE FROM simple_rag_collection_state WHERE collection_name = #{collectionName}
+  </delete>
+  <select id="selectCollectionNamesByOwnerAgentId" resultType="string">
+    SELECT collection_name FROM simple_rag_collection_state WHERE owner_agent_id = #{ownerAgentId}
+  </select>
+  <delete id="deleteByOwnerAgentId">
+    DELETE FROM simple_rag_collection_state WHERE owner_agent_id = #{ownerAgentId}
+  </delete>
+</mapper>

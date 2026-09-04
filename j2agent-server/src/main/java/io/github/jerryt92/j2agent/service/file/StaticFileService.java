@@ -64,7 +64,7 @@ public class StaticFileService {
         if (resource != null) {
             return resource;
         }
-        return searchKnowledgeRepoFile(relativePath);
+        return null; // No cross-repository fallback for protected references.
     }
 
     /**
@@ -83,6 +83,10 @@ public class StaticFileService {
         }
         FileSystemResource resource = new FileSystemResource(resolved);
         if (resource.exists() && resource.isFile()) {
+            try {
+                Path repository = normalizedRoot.resolve(Path.of(relativePath.replace('\\', '/')).getName(0));
+                if (!resolved.toRealPath().startsWith(repository.toRealPath())) return null;
+            } catch (IOException e) { return null; }
             return resource;
         }
         if (logOnMiss) {
@@ -216,7 +220,7 @@ public class StaticFileService {
                     .filename(fileName, StandardCharsets.UTF_8)
                     .build());
         }
-        return ResponseEntity.ok()
+        return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore())
                 .headers(headers)
                 .contentType(parseMediaType(fileName))
                 .body(resource);

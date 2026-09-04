@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ObjectFileMapper">
+    <select id="selectByBucket" resultType="io.github.jerryt92.j2agent.model.po.ObjectFilePo">
+        SELECT id,
+               provider,
+               bucket_name,
+               object_key,
+               object_key_hash,
+               etag,
+               size_bytes,
+               content_type,
+               object_modified_at,
+               operation_status,
+               last_error,
+               created_at,
+               updated_at
+        FROM object_file
+        WHERE bucket_name = #{bucket}
+        ORDER BY object_key
+    </select>
+    <select id="selectByBucketAndStatus" resultType="io.github.jerryt92.j2agent.model.po.ObjectFilePo">
+        SELECT id,
+               provider,
+               bucket_name,
+               object_key,
+               object_key_hash,
+               etag,
+               size_bytes,
+               content_type,
+               object_modified_at,
+               operation_status,
+               last_error,
+               created_at,
+               updated_at
+        FROM object_file
+        WHERE bucket_name = #{bucket}
+          AND operation_status = #{status}
+        ORDER BY object_key
+    </select>
+    <select id="selectByKey" resultType="io.github.jerryt92.j2agent.model.po.ObjectFilePo">
+        SELECT id,
+               provider,
+               bucket_name,
+               object_key,
+               object_key_hash,
+               etag,
+               size_bytes,
+               content_type,
+               object_modified_at,
+               operation_status,
+               last_error,
+               created_at,
+               updated_at
+        FROM object_file
+        WHERE bucket_name = #{bucket}
+          AND object_key_hash = #{objectKeyHash} LIMIT 1
+    </select>
+    <select id="selectById" resultType="io.github.jerryt92.j2agent.model.po.ObjectFilePo">
+        SELECT id,
+               provider,
+               bucket_name,
+               object_key,
+               object_key_hash,
+               etag,
+               size_bytes,
+               content_type,
+               object_modified_at,
+               operation_status,
+               last_error,
+               created_at,
+               updated_at
+        FROM object_file
+        WHERE id = #{id} LIMIT 1
+    </select>
+    <select id="selectByObjectKeyPrefix" resultType="io.github.jerryt92.j2agent.model.po.ObjectFilePo">
+        SELECT id,
+               provider,
+               bucket_name,
+               object_key,
+               object_key_hash,
+               etag,
+               size_bytes,
+               content_type,
+               object_modified_at,
+               operation_status,
+               last_error,
+               created_at,
+               updated_at
+        FROM object_file
+        WHERE bucket_name = #{bucket}
+          AND object_key LIKE CONCAT(#{prefix}, '%')
+        ORDER BY object_key
+    </select>
+    <insert id="insert">
+        INSERT INTO object_file
+        (id, provider, bucket_name, object_key, object_key_hash, etag, size_bytes, content_type,
+         object_modified_at, operation_status, last_error, created_at, updated_at)
+        VALUES (#{id}, #{provider}, #{bucketName}, #{objectKey}, #{objectKeyHash}, #{etag}, #{sizeBytes},
+                #{contentType}, #{objectModifiedAt}, #{operationStatus}, #{lastError}, #{createdAt}, #{updatedAt})
+    </insert>
+    <insert id="upsert">
+        INSERT INTO object_file
+        (id, provider, bucket_name, object_key, object_key_hash, etag, size_bytes, content_type,
+         object_modified_at, operation_status, last_error, created_at, updated_at)
+        VALUES (#{id}, #{provider}, #{bucketName}, #{objectKey}, #{objectKeyHash}, #{etag}, #{sizeBytes},
+                #{contentType}, #{objectModifiedAt}, #{operationStatus}, #{lastError}, #{createdAt},
+                #{updatedAt}) ON CONFLICT (bucket_name, object_key_hash) DO
+        UPDATE SET
+            provider = EXCLUDED.provider,
+            object_key = EXCLUDED.object_key,
+            etag = EXCLUDED.etag,
+            size_bytes = EXCLUDED.size_bytes,
+            content_type = EXCLUDED.content_type,
+            object_modified_at = EXCLUDED.object_modified_at,
+            operation_status = EXCLUDED.operation_status,
+            last_error = EXCLUDED.last_error,
+            updated_at = EXCLUDED.updated_at
+    </insert>
+    <update id="updateStatus">
+        UPDATE object_file
+        SET operation_status = #{status},
+            last_error       = #{lastError},
+            updated_at       = #{updatedAt}
+        WHERE bucket_name = #{bucket}
+          AND object_key_hash = #{objectKeyHash}
+    </update>
+    <delete id="deleteByKey">
+        DELETE
+        FROM object_file
+        WHERE bucket_name = #{bucket}
+          AND object_key_hash = #{objectKeyHash}
+    </delete>
+</mapper>
+

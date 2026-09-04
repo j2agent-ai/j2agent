@@ -1,8 +1,9 @@
 package io.github.jerryt92.j2agent.service.llm.agent.core;
 
+import io.github.jerryt92.j2agent.constants.CommonConstants;
+import io.github.jerryt92.j2agent.mapper.ext.ResourcePermissionMapper;
 import io.github.jerryt92.j2agent.model.AgentInfoDto;
 import io.github.jerryt92.j2agent.model.AgentInfoList;
-import io.github.jerryt92.j2agent.constants.CommonConstants;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
 import io.github.jerryt92.j2agent.utils.I18nLocaleUtils;
@@ -24,6 +25,12 @@ import java.util.stream.Collectors;
 @Slf4j
 @Component
 public class AgentRouter {
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.service.security.ResourceAccessService resourceAccess;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private ResourcePermissionMapper permissionMapper;
+
 
     private final ApplicationContext applicationContext;
     private volatile Map<String, AiAgent> agents = Map.of();
@@ -54,6 +61,13 @@ public class AgentRouter {
             next.put(agentId, agent);
         }
         this.agents = Map.copyOf(next);
+        if (permissionMapper != null) {
+            // First registration after upgrade preserves access once, including built-in agents.
+            Boolean migrated = permissionMapper.aclAgentsInitialized();
+            long now = System.currentTimeMillis();
+            for (String id : next.keySet()) permissionMapper.registerAgent(id, !Boolean.TRUE.equals(migrated), now);
+            permissionMapper.markAclAgentsInitialized();
+        }
     }
 
     /**
@@ -73,7 +87,9 @@ public class AgentRouter {
      */
     public AgentInfoList listRegisteredAgents(String language) {
         String locale = I18nLocaleUtils.normalizeLanguage(language);
+        java.util.Set<String> allowed = resourceAccess.allowedAgents(resourceAccess.current());
         List<AgentInfoDto> items = agents.values().stream()
+                .filter(a -> resourceAccess.current().isAdmin() || allowed.contains(a.getAgentId()))
                 .filter(a -> !UniversalAssistantConstants.isUniversalAssistant(a.getAgentId()))
                 .filter(a -> !UniversalAssistantConstants.isKnowledgeQaAssistant(a.getAgentId()))
                 .sorted(Comparator.comparingInt(AiAgent::getSort)
@@ -109,9 +125,6 @@ public class AgentRouter {
             return "";
         }
         AiAgent agent = agents.get(agentId);
-        if (agent == null && "assistant".equals(agentId)) {
-            agent = agents.get("chat_assistant");
-        }
         if (agent == null) {
             return agentId;
         }

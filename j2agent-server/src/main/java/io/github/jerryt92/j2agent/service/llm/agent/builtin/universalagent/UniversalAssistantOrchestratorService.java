@@ -30,6 +30,9 @@ import java.util.UUID;
  */
 @Service
 public class UniversalAssistantOrchestratorService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.service.security.ResourceAccessService resourceAccess;
+
 
     private static final int MAX_ORCHESTRATION_ROUNDS = 3;
 
@@ -93,7 +96,11 @@ public class UniversalAssistantOrchestratorService {
             return OrchestrationOutcome.CONTINUE;
         }
         String manualOrchestrateAgentId = StringUtils.trimToNull(request.manualOrchestrateAgentId());
-        List<AiAgent> callableSubAgents = agentRouter.listCallableSubAgents();
+        java.util.Set<String> allowed = resourceAccess == null
+                ? java.util.Set.of()
+                : resourceAccess.allowedAgents(request.userContext());
+        List<AiAgent> callableSubAgents = agentRouter.listCallableSubAgents().stream()
+                .filter(a -> resourceAccess == null || request.userContext().isAdmin() || allowed.contains(a.getAgentId())).toList();
         if (callableSubAgents.isEmpty()) {
             if (manualOrchestrateAgentId != null) {
                 throw new IllegalArgumentException("Unsupported agentId: " + manualOrchestrateAgentId);
@@ -149,7 +156,7 @@ public class UniversalAssistantOrchestratorService {
         }
 
         String candidates = intentQueryService.queryIntentAgents(
-                request.parentConversationId(), routingQuery, request.turnId());
+                request.parentConversationId(), routingQuery, request.turnId(), callableSubAgents);
 
         if (UniversalIntentQueryService.isCandidatesEmpty(candidates)) {
             return OrchestrationOutcome.CONTINUE;
@@ -176,6 +183,8 @@ public class UniversalAssistantOrchestratorService {
                 break;
             }
             String trimmedAgentId = agentId.trim();
+            if (callableSubAgents.stream().noneMatch(a -> a.getAgentId().equals(trimmedAgentId)))
+                io.github.jerryt92.j2agent.service.security.ResourceAccessService.deny("AGENT_ACCESS_DENIED");
             if (StringUtils.isBlank(routingQuery)) {
                 break;
             }

@@ -4,6 +4,7 @@ import io.github.jerryt92.j2agent.model.KnowledgeCollectionDto;
 import io.github.jerryt92.j2agent.model.KnowledgeCollectionListDto;
 import io.github.jerryt92.j2agent.model.KnowledgeDto;
 import io.github.jerryt92.j2agent.model.KnowledgeGetListDto;
+import io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo;
 import io.github.jerryt92.j2agent.model.po.KnowledgeTextChunkPo;
 import io.github.jerryt92.j2agent.model.repository.KnowledgeRepositoryDtos;
 import io.github.jerryt92.j2agent.service.embedding.EmbeddingService;
@@ -27,6 +28,8 @@ import java.util.Set;
 @Slf4j
 @Service
 public class KnowledgeService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.service.security.ResourceAccessService resourceAccess;
     /** 知识库展示名为空时的占位符 */
     private static final String EMPTY_REPOSITORY_NAME_PLACEHOLDER = "--";
 
@@ -49,7 +52,36 @@ public class KnowledgeService {
     }
 
     /**
-     * 查询当前可用的知识库 collection 列表（含展示名等元信息）。
+     * 查询当前用户可读的知识库 collection（对话选库等）；不含管理端副作用。
+     */
+    public KnowledgeCollectionListDto getReadableKnowledgeCollections() {
+        List<KnowledgeRepositoryPo> repositories = resourceAccess.readable(resourceAccess.current());
+        List<KnowledgeRepositoryDtos.Item> repositoryItems = repositories.stream()
+                .map(po -> {
+                    KnowledgeRepositoryDtos.Item item = new KnowledgeRepositoryDtos.Item();
+                    item.setId(po.getId());
+                    item.setRepoCode(po.getRepoCode());
+                    item.setDisplayName(po.getDisplayName());
+                    String collection = io.github.jerryt92.j2agent.service.security.ResourceAccessService.collection(po);
+                    item.setCollectionName(collection);
+                    item.setCollections(StringUtils.isBlank(collection) ? List.of() : List.of(collection));
+                    return item;
+                })
+                .toList();
+        KnowledgeCollectionListDto result = new KnowledgeCollectionListDto();
+        result.setData(repositoryItems.stream().map(repo -> {
+            KnowledgeCollectionDto dto = new KnowledgeCollectionDto();
+            dto.setCollection(repo.getCollectionName());
+            dto.setSelectionValue(KnowledgeCollectionSelection.encode(repo.getRepoCode(), repo.getCollectionName()));
+            dto.setName(StringUtils.defaultIfBlank(repo.getDisplayName(), repo.getRepoCode()));
+            dto.setRepositoryId(repo.getId());
+            return dto;
+        }).filter(dto -> StringUtils.isNotBlank(dto.getCollection())).toList());
+        return result;
+    }
+
+    /**
+     * 查询管理端可用的知识库 collection 列表（含展示名等元信息）。
      */
     public KnowledgeCollectionListDto getKnowledgeCollections() {
         KnowledgeRepositoryDtos.ListResponse repositories = repositoryService.list();
@@ -58,7 +90,14 @@ public class KnowledgeService {
                 : repositories.getData();
         Set<String> collections = collectConfiguredAndActiveCollections();
         KnowledgeCollectionListDto result = new KnowledgeCollectionListDto();
-        result.setData(buildCollectionDtos(repositoryItems, collections));
+        result.setData(repositoryItems.stream().map(repo -> {
+            KnowledgeCollectionDto dto=new KnowledgeCollectionDto();
+            dto.setCollection(repo.getCollectionName());
+            dto.setSelectionValue(KnowledgeCollectionSelection.encode(repo.getRepoCode(),repo.getCollectionName()));
+            dto.setName(StringUtils.defaultIfBlank(repo.getDisplayName(),repo.getRepoCode()));
+            dto.setRepositoryId(repo.getId());
+            return dto;
+        }).toList());
         return result;
     }
 
@@ -151,8 +190,11 @@ public class KnowledgeService {
             result.setData(List.of());
             return result;
         }
+        var selections=resourceAccess.resolveCollections(resourceAccess.current(),List.of(collection),true);
+        var prefixes=selections.stream().map(s -> KnowledgeCollectionSelection.parse(s).repoCode()+"/").toList();
+        try(var scope=new io.github.jerryt92.j2agent.service.security.KnowledgeReadScope(prefixes)) {
         List<KnowledgeDto> data = knowledgeTextChunkService.listByCollection(
-                        collection,
+                        KnowledgeCollectionSelection.parse(collection).collection(),
                         search,
                         offset == null ? 0 : offset,
                         limit == null ? 10 : limit
@@ -161,6 +203,7 @@ public class KnowledgeService {
                 .toList();
         result.setData(data);
         return result;
+        }
     }
 
     private KnowledgeDto toKnowledgeDto(KnowledgeTextChunkPo po) {

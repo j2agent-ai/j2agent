@@ -5,6 +5,7 @@ import io.github.jerryt92.j2agent.mapper.KnowledgeRepositoryMapper;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeMarkdownImageRewriter;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMetadataService;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repository.KnowledgeRepositoryAutoRegistrar;
+import io.github.jerryt92.j2agent.service.security.ResourceAccessService;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.support.ToolCallbacks;
 
@@ -25,7 +26,8 @@ class KnowledgeQaAssistantAgentTest {
         KnowledgeQaAssistantAgent agent = new KnowledgeQaAssistantAgent(
                 null,
                 new KnowledgeRepoMetadataService(properties, mapper, new KnowledgeRepositoryAutoRegistrar(mapper, properties)),
-                new KnowledgeMarkdownImageRewriter());
+                new KnowledgeMarkdownImageRewriter(),
+                mock(ResourceAccessService.class));
 
         Object[] tools = agent.buildTools();
 

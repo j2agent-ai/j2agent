@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.KnowledgeSourceFileHashMapper">
+    <select id="selectAll" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeSourceFileHashPo">
+        SELECT id,
+               file_path,
+               file_path_hash,
+               file_sha256,
+               metadata_config_hash AS metadataConfigHash,
+               collection_name,
+               partition_names      AS partitionNamesJson,
+               knowledge_count,
+               file_size_bytes,
+               last_scan_time,
+               sync_status,
+               created_at,
+               updated_at
+        FROM knowledge_source_file_hash
+    </select>
+    <select id="selectActiveFileCollectionMap" resultType="map">
+        SELECT file_path AS "filePath", collection_name AS "collectionName"
+        FROM knowledge_source_file_hash
+        WHERE sync_status = 'ACTIVE'
+    </select>
+    <select id="selectInFlightFileCollectionMap" resultType="map">
+        SELECT file_path AS "filePath", collection_name AS "collectionName"
+        FROM knowledge_source_file_hash
+        WHERE sync_status = 'SYNCING'
+    </select>
+    <select id="selectActiveCollectionCounts" resultType="map">
+        SELECT collection_name AS "collectionName", COUNT(1) AS "fileCount"
+        FROM knowledge_source_file_hash
+        WHERE sync_status = 'ACTIVE'
+        GROUP BY collection_name
+    </select>
+    <insert id="upsert">
+        INSERT INTO knowledge_source_file_hash
+        (id, file_path, file_path_hash, file_sha256, metadata_config_hash, collection_name, partition_names,
+         knowledge_count, file_size_bytes, last_scan_time, sync_status, created_at, updated_at)
+        VALUES (#{id}, #{filePath}, #{filePathHash}, #{fileSha256}, #{metadataConfigHash}, #{collectionName},
+                #{partitionNamesJson}, #{knowledgeCount}, #{fileSizeBytes}, #{lastScanTime}, #{syncStatus},
+                #{createdAt}, #{updatedAt}) ON CONFLICT (file_path_hash) DO
+        UPDATE SET
+            file_sha256 = EXCLUDED.file_sha256,
+            metadata_config_hash = EXCLUDED.metadata_config_hash,
+            collection_name = EXCLUDED.collection_name,
+            partition_names = EXCLUDED.partition_names,
+            knowledge_count = EXCLUDED.knowledge_count,
+            file_size_bytes = EXCLUDED.file_size_bytes,
+            last_scan_time = EXCLUDED.last_scan_time,
+            sync_status = EXCLUDED.sync_status,
+            updated_at = EXCLUDED.updated_at
+    </insert>
+    <update id="markDeleted">
+        UPDATE knowledge_source_file_hash
+        SET sync_status    = 'DELETED',
+            last_scan_time = #{scanTime},
+            updated_at     = #{scanTime}
+        WHERE file_path_hash = #{filePathHash}
+    </update>
+    <delete id="deleteAll">
+        DELETE
+        FROM knowledge_source_file_hash
+    </delete>
+</mapper>
+

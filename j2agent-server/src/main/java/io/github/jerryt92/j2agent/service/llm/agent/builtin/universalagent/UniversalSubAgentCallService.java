@@ -41,6 +41,9 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 @Service
 public class UniversalSubAgentCallService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private io.github.jerryt92.j2agent.service.security.ResourceAccessService resourceAccess;
+
 
     private static final int MAX_SUB_AGENT_CALL_RESULT_LENGTH = ToolEventEmitter.MAX_TOOL_RESULT_LENGTH;
 
@@ -77,6 +80,11 @@ public class UniversalSubAgentCallService {
         String turnId = request.turnId();
         throwIfCancelled(turnId);
         String trimmedAgentId = agentId.trim();
+        if (resourceAccess != null) {
+            resourceAccess.requireAgent(request.userContext(), trimmedAgentId);
+            if (!request.userContext().getUserId().trim().equals(request.userId().trim()))
+                io.github.jerryt92.j2agent.service.security.ResourceAccessService.deny("AGENT_ACCESS_DENIED");
+        }
         String trimmedQuery = query.trim();
         boolean callable = agentRouter.listCallableSubAgents().stream()
                 .anyMatch(a -> trimmedAgentId.equals(a.getAgentId()));
@@ -142,6 +150,8 @@ public class UniversalSubAgentCallService {
             }
             return text;
         } catch (TurnCancelledException ex) {
+            throw ex;
+        } catch (org.springframework.web.server.ResponseStatusException ex) {
             throw ex;
         } catch (Exception ex) {
             log.warn("sub-agent call 失败: agentId={}", trimmedAgentId, ex);

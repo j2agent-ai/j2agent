@@ -1,17 +1,21 @@
 package io.github.jerryt92.j2agent.service.llm.agent.builtin.knowledgeqa;
 
+import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.service.llm.agent.builtin.AgentToolContextSupport;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunnableContextKeys;
 import io.github.jerryt92.j2agent.service.rag.RagSourcePublicationService;
 import io.github.jerryt92.j2agent.service.rag.knowledge.KnowledgeCollectionSelection;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeMarkdownImageRewriter;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMetadataService;
+import io.github.jerryt92.j2agent.service.security.ResourceAccessService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -32,6 +36,11 @@ import java.util.stream.Stream;
  */
 @Slf4j
 class KnowledgeQaGrepTool {
+    private ResourceAccessService resourceAccess;
+
+    void setResourceAccess(ResourceAccessService access) {
+        this.resourceAccess = access;
+    }
 
     private static final int MAX_FILES = 500;
     private static final int MAX_MATCHES = 40;
@@ -65,9 +74,13 @@ class KnowledgeQaGrepTool {
         if (normalizedRoot == null) {
             return "知识库根目录未配置或不存在，无法执行 grep。";
         }
-        Set<KnowledgeCollectionSelection.Parsed> selectedCollections = selectedCollections(toolContext);
-        if (selectedCollections.isEmpty()) {
+        Set<KnowledgeCollectionSelection.Parsed> requested = parseRequestedCollections(toolContext);
+        if (requested.isEmpty()) {
             return "本轮未选择知识库，无法执行 grep。请先选择知识库后再检索。";
+        }
+        Set<KnowledgeCollectionSelection.Parsed> selectedCollections = authorizeCollections(toolContext, requested);
+        if (selectedCollections.isEmpty()) {
+            return "无权访问所选知识库，无法执行 grep。";
         }
 
         String trimmedPattern = pattern.trim();
@@ -180,16 +193,24 @@ class KnowledgeQaGrepTool {
         if (normalizedRoot == null) {
             return "知识库根目录未配置或不存在，无法读取文件。";
         }
-        Set<KnowledgeCollectionSelection.Parsed> selectedCollections = selectedCollections(toolContext);
-        if (selectedCollections.isEmpty()) {
+        Set<KnowledgeCollectionSelection.Parsed> requested = parseRequestedCollections(toolContext);
+        if (requested.isEmpty()) {
             return "本轮未选择知识库，无法读取文件。请先选择知识库后再读取。";
+        }
+        Set<KnowledgeCollectionSelection.Parsed> selectedCollections = authorizeCollections(toolContext, requested);
+        if (selectedCollections.isEmpty()) {
+            return "无权访问所选知识库，无法读取文件。";
         }
         Path resolvedFile = resolveReadableFile(normalizedRoot, relativeFilePath);
         if (resolvedFile == null || !isInSelectedCollection(resolvedFile, selectedCollections)) {
             return "文件路径无效、越界，或不属于本轮选择的知识库。";
         }
+        String relative = normalizedRoot.relativize(resolvedFile).toString().replace('\\', '/');
+        if (denyUnlessSourceReadable(toolContext, relative) != null) {
+            return "无权访问所选知识库，无法读取文件。";
+        }
         if (!Files.exists(resolvedFile) || !Files.isRegularFile(resolvedFile)) {
-            return "文件不存在: " + normalizedRoot.relativize(resolvedFile).toString().replace('\\', '/');
+            return "文件不存在: " + relative;
         }
         try {
             long size = Files.size(resolvedFile);
@@ -198,7 +219,6 @@ class KnowledgeQaGrepTool {
             }
             String content = Files.readString(resolvedFile, StandardCharsets.UTF_8);
             int limit = maxChars == null || maxChars <= 0 ? DEFAULT_READ_MAX_CHARS : maxChars;
-            String relative = normalizedRoot.relativize(resolvedFile).toString().replace('\\', '/');
             content = rewriteOutputMarkdown(relative, content);
             if (content.length() <= limit) {
                 return "**文件**: `" + relative + "`\n\n```markdown\n" + content + "\n```";
@@ -226,14 +246,25 @@ class KnowledgeQaGrepTool {
             return List.of();
         }
         String normalizedSubDir = normalizeRelativeSubDir(relativeSubDir);
-        try (Stream<Path> walk = Files.walk(normalizedRoot)) {
-            return walk.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().endsWith(MD_SUFFIX))
-                    .filter(path -> isInSelectedCollection(path, selectedCollections))
-                    .filter(path -> matchesRelativeSubDir(normalizedRoot, path, normalizedSubDir))
-                    .sorted(Comparator.comparing(path -> normalizedRoot.relativize(path).toString()))
-                    .toList();
+        List<Path> files = new ArrayList<>();
+        for (KnowledgeCollectionSelection.Parsed selection : selectedCollections) {
+            if (selection == null || StringUtils.isBlank(selection.repoCode())) {
+                continue;
+            }
+            Path repoDir = normalizedRoot.resolve(selection.repoCode()).normalize();
+            if (!repoDir.startsWith(normalizedRoot) || !Files.isDirectory(repoDir)) {
+                continue;
+            }
+            try (Stream<Path> walk = Files.walk(repoDir)) {
+                walk.filter(Files::isRegularFile)
+                        .filter(path -> path.getFileName().toString().endsWith(MD_SUFFIX))
+                        .filter(path -> isInSelectedCollection(path, selectedCollections))
+                        .filter(path -> matchesRelativeSubDir(normalizedRoot, path, normalizedSubDir))
+                        .forEach(files::add);
+            }
         }
+        files.sort(Comparator.comparing(path -> normalizedRoot.relativize(path).toString()));
+        return files;
     }
 
     private String normalizeRelativeSubDir(String relativeSubDir) {
@@ -278,18 +309,18 @@ class KnowledgeQaGrepTool {
 
     private boolean isInSelectedCollection(Path file, Set<KnowledgeCollectionSelection.Parsed> selectedCollections) {
         try {
-            String collection = metadataService.resolveCollection(file);
             String sourceFile = resolveRepoRoot().relativize(file.toAbsolutePath().normalize()).toString().replace('\\', '/');
             return selectedCollections.stream()
-                    .anyMatch(selection -> selection.collection().equals(collection)
+                    .anyMatch(selection -> StringUtils.isNotBlank(selection.repoCode())
                             && KnowledgeCollectionSelection.matchesSourceFile(selection, sourceFile));
         } catch (Exception ex) {
-            log.debug("knowledge_qa grep 跳过无 collection 元数据文件: path={}, reason={}", file, ex.getMessage());
+            log.debug("knowledge_qa grep 跳过无法鉴权的文件: path={}, reason={}", file, ex.getMessage());
             return false;
         }
     }
 
-    private Set<KnowledgeCollectionSelection.Parsed> selectedCollections(ToolContext toolContext) {
+    /** 从工具上下文解析本轮选择的知识库，未鉴权。 */
+    private Set<KnowledgeCollectionSelection.Parsed> parseRequestedCollections(ToolContext toolContext) {
         Object raw = AgentToolContextSupport.contextMap(toolContext)
                 .get(AgentRunnableContextKeys.CONTEXT_KEY_KNOWLEDGE_COLLECTIONS);
         LinkedHashSet<KnowledgeCollectionSelection.Parsed> selected = new LinkedHashSet<>();
@@ -301,6 +332,62 @@ class KnowledgeQaGrepTool {
             addCollectionValue(selected, raw);
         }
         return selected;
+    }
+
+    /** 按本轮用户可读范围收口选择项；无身份或无权限时返回空集合。 */
+    private Set<KnowledgeCollectionSelection.Parsed> authorizeCollections(
+            ToolContext toolContext,
+            Set<KnowledgeCollectionSelection.Parsed> requested) {
+        if (resourceAccess == null || requested == null || requested.isEmpty()) {
+            return Set.of();
+        }
+        UserContextBo user = AgentToolContextSupport.resolveTurnUser(toolContext);
+        if (user == null) {
+            return Set.of();
+        }
+        try {
+            List<String> allowed = resourceAccess.resolveCollections(
+                    user,
+                    requested.stream().map(KnowledgeCollectionSelection.Parsed::rawValue).toList(),
+                    false);
+            LinkedHashSet<KnowledgeCollectionSelection.Parsed> checked = new LinkedHashSet<>();
+            for (String value : allowed) {
+                KnowledgeCollectionSelection.Parsed parsed = KnowledgeCollectionSelection.parse(value);
+                if (parsed == null || StringUtils.isBlank(parsed.repoCode())) {
+                    continue;
+                }
+                resourceAccess.requireRepository(user, parsed.repoCode(), 2);
+                checked.add(parsed);
+            }
+            return checked;
+        } catch (ResponseStatusException exception) {
+            if (exception.getStatusCode() == HttpStatus.FORBIDDEN
+                    || exception.getStatusCode() == HttpStatus.UNAUTHORIZED) {
+                return Set.of();
+            }
+            throw exception;
+        }
+    }
+
+    /** 按文件相对路径再校验仓库读权限，通过返回 null。 */
+    private String denyUnlessSourceReadable(ToolContext toolContext, String relativeSource) {
+        if (resourceAccess == null) {
+            return "无权访问所选知识库。";
+        }
+        UserContextBo user = AgentToolContextSupport.resolveTurnUser(toolContext);
+        if (user == null) {
+            return "无权访问所选知识库。";
+        }
+        try {
+            resourceAccess.requireSource(user, relativeSource);
+            return null;
+        } catch (ResponseStatusException exception) {
+            if (exception.getStatusCode() == HttpStatus.FORBIDDEN
+                    || exception.getStatusCode() == HttpStatus.UNAUTHORIZED) {
+                return "无权访问所选知识库。";
+            }
+            throw exception;
+        }
     }
 
     private void addCollectionValue(Set<KnowledgeCollectionSelection.Parsed> target, Object raw) {

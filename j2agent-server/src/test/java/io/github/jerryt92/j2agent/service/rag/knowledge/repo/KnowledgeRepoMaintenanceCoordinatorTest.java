@@ -321,6 +321,36 @@ class KnowledgeRepoMaintenanceCoordinatorTest {
     }
 
     @Test
+    void snapshotSyncStatus_whenTaskInterrupted_reportsIdleInsteadOfRunning() throws Exception {
+        when(metadataService.getRepoRootPath()).thenReturn(tempRepo);
+        when(lockService.repoRootHash(tempRepo)).thenReturn("repo-hash");
+        doAnswer(invocation -> {
+            Runnable action = invocation.getArgument(2);
+            action.run();
+            return true;
+        }).when(lockService).tryWithLock(eq("repo-hash"), any(), any());
+        when(progressTracker.snapshot()).thenReturn(new KnowledgeRepoSyncProgressTracker.Snapshot(
+                KnowledgeRepoSyncPhase.UPSERTING, 3, 1, "doc/a.md", List.of()));
+        CountDownLatch rebuildEntered = new CountDownLatch(1);
+        // 模拟进程退出/中断：任务提前抛出，不会走到把状态置回 IDLE 的分支
+        when(syncService.executeFullRebuild(any())).thenAnswer(invocation -> {
+            rebuildEntered.countDown();
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Maintenance interrupted");
+        });
+
+        coordinator = newCoordinator();
+        coordinator.requestEmbeddingRuntimeRebuild();
+        assertTrue(rebuildEntered.await(5, TimeUnit.SECONDS));
+        Thread.sleep(300);
+
+        assertFalse(coordinator.isMaintenanceActive());
+        assertFalse(coordinator.isExclusiveSyncActive());
+        assertFalse(coordinator.isFullRebuildRunning());
+        assertEquals(KnowledgeRepoMaintenanceTaskType.IDLE, coordinator.snapshotSyncStatus().taskType());
+    }
+
+    @Test
     void isExclusiveGenerationActive_tracksLatestGeneration() {
         coordinator = newCoordinator();
         long gen1 = coordinator.claimExclusiveGeneration();

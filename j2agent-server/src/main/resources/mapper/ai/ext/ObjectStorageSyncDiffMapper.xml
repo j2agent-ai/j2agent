@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ObjectStorageSyncDiffMapper">
+  <insert id="insert">
+      INSERT INTO object_storage_sync_diff
+      (id, task_id, bucket_name, object_key, object_key_hash, diff_type, resolution_status,
+       oss_etag, oss_size_bytes, oss_modified_at, db_etag, db_size_bytes, db_modified_at,
+       resolution_action, resolution_error, created_at, updated_at)
+      VALUES (#{id}, #{taskId}, #{bucketName}, #{objectKey}, #{objectKeyHash}, #{diffType},
+              #{resolutionStatus}, #{ossEtag}, #{ossSizeBytes}, #{ossModifiedAt}, #{dbEtag},
+              #{dbSizeBytes}, #{dbModifiedAt}, #{resolutionAction}, #{resolutionError},
+              #{createdAt}, #{updatedAt})
+  </insert>
+  <select id="selectByTask" resultType="io.github.jerryt92.j2agent.model.po.ObjectStorageSyncDiffPo">
+SELECT id, task_id, bucket_name, object_key, object_key_hash, diff_type, resolution_status,
+                   oss_etag, oss_size_bytes, oss_modified_at, db_etag, db_size_bytes, db_modified_at,
+                   resolution_action, resolution_error, created_at, updated_at
+            FROM object_storage_sync_diff
+            WHERE task_id = #{taskId}
+            ORDER BY object_key
+  </select>
+  <select id="selectById" resultType="io.github.jerryt92.j2agent.model.po.ObjectStorageSyncDiffPo">
+SELECT id, task_id, bucket_name, object_key, object_key_hash, diff_type, resolution_status,
+                   oss_etag, oss_size_bytes, oss_modified_at, db_etag, db_size_bytes, db_modified_at,
+                   resolution_action, resolution_error, created_at, updated_at
+            FROM object_storage_sync_diff
+            WHERE id = #{id}
+  </select>
+  <update id="updateResolution">
+UPDATE object_storage_sync_diff
+            SET resolution_status = #{status}, resolution_action = #{action},
+                resolution_error = #{error}, updated_at = #{updatedAt}
+            WHERE id = #{id}
+  </update>
+  <delete id="deleteByTask">
+DELETE FROM object_storage_sync_diff WHERE task_id = #{taskId}
+  </delete>
+  <delete id="deleteByBucketExceptTask">
+DELETE FROM object_storage_sync_diff
+            WHERE bucket_name = #{bucket} AND task_id &lt;&gt; #{taskId}
+  </delete>
+  <delete id="deleteByCompletedTaskBefore">
+DELETE FROM object_storage_sync_diff d
+            USING object_storage_sync_task t
+            WHERE d.task_id = t.id
+              AND t.task_status IN ('FAILED', 'CANCELLED')
+              AND t.completed_at IS NOT NULL
+              AND t.completed_at &lt; #{cutoff}
+  </delete>
+</mapper>
+

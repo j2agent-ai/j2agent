@@ -45,7 +45,11 @@ public class KnowledgeRepoMaintenanceLockService {
     }
 
     public RLock lock(String repoRootHash) {
-        return redissonClient.getLock(lockPrefix + repoRootHash);
+        return redissonClient.getReadWriteLock(lockPrefix + repoRootHash).writeLock();
+    }
+
+    public RLock readLock(String repoRootHash) {
+        return redissonClient.getReadWriteLock(lockPrefix + repoRootHash).readLock();
     }
 
     /**

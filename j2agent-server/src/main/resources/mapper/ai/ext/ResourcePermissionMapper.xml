@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ext.ResourcePermissionMapper">
+
+    <select id="selectAgentPermissions"
+            resultType="io.github.jerryt92.j2agent.model.po.ResourcePermissionRow">
+        SELECT agent_id AS resource_id, permission_level, expires_at
+        FROM user_agent_permission
+        WHERE user_id = #{userId}
+          AND (expires_at IS NULL OR expires_at &gt; #{now})
+    </select>
+
+    <select id="selectKnowledgePermissions"
+            resultType="io.github.jerryt92.j2agent.model.po.ResourcePermissionRow">
+        SELECT knowledge_repository_id AS resource_id, permission_level, expires_at
+        FROM user_knowledge_permission
+        WHERE user_id = #{userId}
+          AND (expires_at IS NULL OR expires_at &gt; #{now})
+    </select>
+
+    <select id="listAgentGrants" resultType="map">
+        SELECT u.username                                               AS "username",
+               p.permission_level                                       AS "permissionLevel",
+               p.expires_at                                             AS "expiresAt",
+               (p.expires_at IS NOT NULL AND p.expires_at &lt;= #{now}) AS expired
+        FROM user_agent_permission p
+                 JOIN app_user u ON u.id = p.user_id
+        WHERE p.agent_id = #{agentId}
+    </select>
+
+    <select id="listKnowledgeGrants" resultType="map">
+        SELECT u.username                                               AS "username",
+               p.permission_level                                       AS "permissionLevel",
+               p.expires_at                                             AS "expiresAt",
+               (p.expires_at IS NOT NULL AND p.expires_at &lt;= #{now}) AS expired
+        FROM user_knowledge_permission p
+                 JOIN app_user u ON u.id = p.user_id
+        WHERE p.knowledge_repository_id = #{repositoryId}
+    </select>
+
+    <select id="findOrdinaryUserId" resultType="string">
+        SELECT id
+        FROM app_user
+        WHERE username = #{username}
+          AND role = 3
+    </select>
+
+    <select id="findAgentExpiry" resultType="long">
+        SELECT expires_at
+        FROM user_agent_permission
+        WHERE user_id = #{userId}
+          AND agent_id = #{agentId}
+    </select>
+
+    <select id="findKnowledgeExpiry" resultType="long">
+        SELECT expires_at
+        FROM user_knowledge_permission
+        WHERE user_id = #{userId}
+          AND knowledge_repository_id = #{repositoryId}
+    </select>
+
+    <insert id="upsertAgentGrant">
+        INSERT INTO user_agent_permission
+        (id, user_id, agent_id, permission_level, expires_at, created_at, updated_at)
+        VALUES (#{id}, #{userId}, #{agentId}, #{permissionLevel}, #{expiresAt}, #{now},
+                #{now}) ON CONFLICT (user_id, agent_id) DO
+        UPDATE SET
+            permission_level = EXCLUDED.permission_level,
+            expires_at = EXCLUDED.expires_at,
+            updated_at = EXCLUDED.updated_at
+    </insert>
+
+    <insert id="upsertKnowledgeGrant">
+        INSERT INTO user_knowledge_permission
+        (id, user_id, knowledge_repository_id, permission_level, expires_at, created_at, updated_at)
+        VALUES (#{id}, #{userId}, #{repositoryId}, #{permissionLevel}, #{expiresAt}, #{now},
+                #{now}) ON CONFLICT (user_id, knowledge_repository_id) DO
+        UPDATE SET
+            permission_level = EXCLUDED.permission_level,
+            expires_at = EXCLUDED.expires_at,
+            updated_at = EXCLUDED.updated_at
+    </insert>
+
+    <delete id="deleteAgentGrant">
+        DELETE
+        FROM user_agent_permission
+        WHERE agent_id = #{agentId}
+          AND user_id = #{userId}
+    </delete>
+
+    <delete id="deleteKnowledgeGrant">
+        DELETE
+        FROM user_knowledge_permission
+        WHERE knowledge_repository_id = #{repositoryId}
+          AND user_id = #{userId}
+    </delete>
+
+    <select id="agentIsPublic" resultType="boolean">
+        SELECT is_public
+        FROM agent_access_config
+        WHERE agent_id = #{agentId}
+    </select>
+
+    <select id="repositoryIsPublic" resultType="boolean">
+        SELECT is_public
+        FROM knowledge_repository
+        WHERE id = #{repositoryId}
+    </select>
+
+    <update id="updateAgentVisibility">
+        UPDATE agent_access_config
+        SET is_public  = #{isPublic},
+            updated_at = #{now}
+        WHERE agent_id = #{agentId}
+    </update>
+
+    <update id="updateRepositoryVisibility">
+        UPDATE knowledge_repository
+        SET is_public  = #{isPublic},
+            updated_at = #{now}
+        WHERE id = #{repositoryId}
+    </update>
+
+    <select id="aclAgentsInitialized" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM ai_properties WHERE property_name = 'resource-acl-agents-initialized')
+    </select>
+    <insert id="registerAgent">
+        INSERT INTO agent_access_config (agent_id, is_public, created_at, updated_at)
+        VALUES (#{agentId}, #{isPublic}, #{now}, #{now}) ON CONFLICT DO NOTHING
+    </insert>
+    <insert id="markAclAgentsInitialized">
+        INSERT INTO ai_properties (property_name, property_value)
+        VALUES ('resource-acl-agents-initialized', 'true') ON CONFLICT DO NOTHING
+    </insert>
+    <select id="findGrantedUserIds" resultType="string">
+        SELECT user_id
+        FROM user_knowledge_permission
+        WHERE knowledge_repository_id = #{repositoryId}
+    </select>
+    <delete id="deleteKnowledgeGrantByUser">
+        DELETE
+        FROM user_knowledge_permission
+        WHERE user_id = #{userId}
+          AND knowledge_repository_id = #{repositoryId}
+    </delete>
+
+    <select id="selectAgentIds" resultType="string">
+        SELECT agent_id FROM agent_access_config
+        <if test="!admin">WHERE is_public = true</if>
+    </select>
+
+    <select id="selectRepositories" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo">
+        SELECT id, creator_user_id AS creatorUserId, is_public AS isPublic, repo_code AS repoCode, type, protocol,
+        enabled, update_interval_minutes AS updateIntervalMinutes, status, remote_url AS remoteUrl,
+        default_branch AS defaultBranch, last_revision AS lastRevision, last_revision_message AS lastRevisionMessage,
+        last_revision_author AS lastRevisionAuthor, last_revision_time AS lastRevisionTime, last_sync_time AS
+        lastSyncTime,
+        last_error AS lastError, protocol_config::text AS protocolConfig, display_name AS displayName,
+        metadata_config::text AS metadataConfig, credential_config_cipher AS credentialConfigCipher,
+        created_at AS createdAt, updated_at AS updatedAt
+        FROM knowledge_repository
+        <if test="elevated == false">
+            WHERE (creator_user_id = #{userId}
+            <if test="manage == false">OR is_public = true</if>
+            <if test="ids != null and !ids.isEmpty()">OR id IN
+                <foreach collection="ids" item="id" open="(" close=")" separator=",">#{id}</foreach>
+            </if>
+            )
+        </if>
+        ORDER BY created_at DESC
+    </select>
+
+</mapper>

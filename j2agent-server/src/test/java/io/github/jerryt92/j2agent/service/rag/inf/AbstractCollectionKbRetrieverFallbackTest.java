@@ -44,4 +44,24 @@ class AbstractCollectionKbRetrieverFallbackTest {
         assertEquals("rag-system", fallback.getMetadata().get("sourceFile"));
         assertEquals("milvus_retrieval_failed", fallback.getMetadata().get("ragFallback"));
     }
+
+    @Test
+    void retrieve_whenNoAccess_returnsEmptyWithoutFallback() {
+        when(retriever.retrieveRagChunksResult("question", "docs", null, null))
+                .thenReturn(new Retriever.RagChunksResult(
+                        Collections.emptyList(),
+                        Retriever.RetrievalStatus.SKIPPED_NO_ACCESS,
+                        null));
+
+        AbstractCollectionKbRetriever kbRetriever = new AbstractCollectionKbRetriever(retriever) {
+            @Override
+            protected List<String> boundCollections() {
+                return List.of("docs");
+            }
+        };
+
+        List<Document> documents = kbRetriever.retrieve(Query.builder().text("question").build());
+
+        assertTrue(documents.isEmpty());
+    }
 }

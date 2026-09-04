@@ -7,6 +7,7 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -24,6 +25,7 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 
 /**
  * Git 协议知识库仓库同步器。
@@ -44,6 +46,7 @@ public class GitKnowledgeRepositorySyncer implements KnowledgeRepositorySyncer {
         String branch = StringUtils.trimToNull(repository.getDefaultBranch());
         List<String> subPaths = KnowledgeRepositorySubPathSupport.parseProtocolConfigSubPaths(repository.getProtocolConfig());
         try {
+            abortIfInterrupted();
             Files.createDirectories(normalizedLocalPath.getParent());
             UsernamePasswordCredentialsProvider credentials = credentialsProvider(credentialConfig);
             if (!Files.exists(normalizedLocalPath.resolve(".git"))) {
@@ -53,6 +56,8 @@ public class GitKnowledgeRepositorySyncer implements KnowledgeRepositorySyncer {
                 hardResetToRemote(branch, normalizedLocalPath, credentials, subPaths);
             }
             return readHead(normalizedLocalPath);
+        } catch (CancellationException e) {
+            throw e;
         } catch (Exception e) {
             throw new IllegalStateException("Git 知识库同步失败: " + repository.getRepoCode(), e);
         }
@@ -76,6 +81,7 @@ public class GitKnowledgeRepositorySyncer implements KnowledgeRepositorySyncer {
         if (credentials != null) {
             command.setCredentialsProvider(credentials);
         }
+        command.setProgressMonitor(interruptibleMonitor());
         try (Git git = command.call()) {
             if (!subPaths.isEmpty()) {
                 checkoutSubPaths(git, resolveActiveBranch(branch, git), subPaths);
@@ -97,7 +103,9 @@ public class GitKnowledgeRepositorySyncer implements KnowledgeRepositorySyncer {
             if (credentials != null) {
                 fetch.setCredentialsProvider(credentials);
             }
+            fetch.setProgressMonitor(interruptibleMonitor());
             fetch.call();
+            abortIfInterrupted();
 
             String activeBranch = resolveActiveBranch(branch, git);
             if (StringUtils.isBlank(activeBranch)) {
@@ -219,6 +227,48 @@ public class GitKnowledgeRepositorySyncer implements KnowledgeRepositorySyncer {
                     commit == null ? null : commit.getShortMessage(),
                     commit == null || commit.getAuthorIdent() == null ? null : commit.getAuthorIdent().getName(),
                     commit == null ? null : Instant.ofEpochSecond(commit.getCommitTime()).toEpochMilli());
+        }
+    }
+
+    /** 可被删除请求打断的 JGit 进度监视器。 */
+    private static ProgressMonitor interruptibleMonitor() {
+        return new ProgressMonitor() {
+            @Override
+            public void start(int totalTasks) {
+                abortIfInterrupted();
+            }
+
+            @Override
+            public void beginTask(String title, int totalWork) {
+                abortIfInterrupted();
+            }
+
+            @Override
+            public void update(int completed) {
+                abortIfInterrupted();
+            }
+
+            @Override
+            public void endTask() {
+                abortIfInterrupted();
+            }
+
+            @Override
+            public boolean isCancelled() {
+                return Thread.currentThread().isInterrupted();
+            }
+
+            @Override
+            public void showDuration(boolean enabled) {
+                // JGit 进度回调，中断路径不关心耗时展示
+            }
+        };
+    }
+
+    /** 删除请求打断当前线程后，立即停止 clone/fetch。 */
+    private static void abortIfInterrupted() {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new CancellationException("Git 同步已中断");
         }
     }
 

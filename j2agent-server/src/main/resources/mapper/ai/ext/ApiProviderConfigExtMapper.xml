@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ext.ApiProviderConfigExtMapper">
+    <sql id="columns">id
+    , api_type AS apiType, config_name AS configName, provider_type AS providerType,
+    config_json AS configJson, enabled, is_current AS isCurrent, description,
+    create_time AS createTime, update_time AS updateTime</sql>
+    <select id="selectByApiType" resultType="io.github.jerryt92.j2agent.model.po.mgb.ApiProviderConfigPo">
+        SELECT
+        <include refid="columns"/>
+        FROM api_provider_config WHERE api_type=#{apiType} ORDER BY id ASC
+    </select>
+    <select id="selectCurrentByApiType" resultType="io.github.jerryt92.j2agent.model.po.mgb.ApiProviderConfigPo">
+        SELECT
+        <include refid="columns"/>
+        FROM api_provider_config
+        WHERE api_type=#{apiType} AND is_current=1 AND enabled=1 ORDER BY id ASC LIMIT 1
+    </select>
+    <update id="clearCurrentByApiType">UPDATE api_provider_config
+                                       SET is_current=0
+                                       WHERE api_type = #{apiType}
+                                         AND is_current = 1</update>
+    <update id="markCurrent">UPDATE api_provider_config
+                             SET is_current=1,
+                                 enabled=1,
+                                 update_time=#{updateTime}
+                             WHERE id = #{id}</update>
+</mapper>

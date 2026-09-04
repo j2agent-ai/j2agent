@@ -36,7 +36,7 @@ import java.util.List;
 
 @Slf4j
 @RestController
-@RequiredRole(UserRoleEnum.KB_ADMIN)
+@RequiredRole(UserRoleEnum.KNOWLEDGE_ADMIN)
 public class KnowledgeController implements KnowledgeApi {
 
     private final KnowledgeService knowledgeService;
@@ -62,7 +62,7 @@ public class KnowledgeController implements KnowledgeApi {
     @Override
     @RequiredRole(UserRoleEnum.USER)
     public ResponseEntity<KnowledgeCollectionListDto> getKnowledgeCollections() {
-        return ResponseEntity.ok(knowledgeService.getKnowledgeCollections());
+        return ResponseEntity.ok(knowledgeService.getReadableKnowledgeCollections());
     }
 
     @Override
