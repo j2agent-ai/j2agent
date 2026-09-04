@@ -1,8 +1,9 @@
 package io.github.jerryt92.j2agent.service.llm.agent.core;
 
+import io.github.jerryt92.j2agent.constants.CommonConstants;
+import io.github.jerryt92.j2agent.mapper.ext.ResourcePermissionMapper;
 import io.github.jerryt92.j2agent.model.AgentInfoDto;
 import io.github.jerryt92.j2agent.model.AgentInfoList;
-import io.github.jerryt92.j2agent.constants.CommonConstants;
 import io.github.jerryt92.j2agent.service.llm.agent.inf.AiAgent;
 import io.github.jerryt92.j2agent.service.llm.universal.UniversalAssistantConstants;
 import io.github.jerryt92.j2agent.utils.I18nLocaleUtils;
@@ -28,7 +29,7 @@ public class AgentRouter {
     private io.github.jerryt92.j2agent.service.security.ResourceAccessService resourceAccess;
 
     @org.springframework.beans.factory.annotation.Autowired
-    private org.springframework.jdbc.core.JdbcTemplate aclJdbc;
+    private ResourcePermissionMapper permissionMapper;
 
 
     private final ApplicationContext applicationContext;
@@ -60,12 +61,12 @@ public class AgentRouter {
             next.put(agentId, agent);
         }
         this.agents = Map.copyOf(next);
-        if (aclJdbc != null) {
+        if (permissionMapper != null) {
             // First registration after upgrade preserves access once, including built-in agents.
-            Boolean migrated = aclJdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM ai_properties WHERE property_name='resource-acl-agents-initialized')", Boolean.class);
+            Boolean migrated = permissionMapper.aclAgentsInitialized();
             long now = System.currentTimeMillis();
-            for (String id : next.keySet()) aclJdbc.update("INSERT INTO agent_access_config(agent_id,is_public,created_at,updated_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING", id, !Boolean.TRUE.equals(migrated), now, now);
-            aclJdbc.update("INSERT INTO ai_properties(property_name,property_value) VALUES ('resource-acl-agents-initialized','true') ON CONFLICT DO NOTHING");
+            for (String id : next.keySet()) permissionMapper.registerAgent(id, !Boolean.TRUE.equals(migrated), now);
+            permissionMapper.markAclAgentsInitialized();
         }
     }
 
@@ -124,9 +125,6 @@ public class AgentRouter {
             return "";
         }
         AiAgent agent = agents.get(agentId);
-        if (agent == null && "assistant".equals(agentId)) {
-            agent = agents.get("chat_assistant");
-        }
         if (agent == null) {
             return agentId;
         }

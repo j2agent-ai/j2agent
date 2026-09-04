@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.KnowledgeTextChunkMapper">
+    <sql id="columns">id
+    , heading_path AS headingPath, text_chunk AS textChunk, source_file AS sourceFile,
+    collection_name AS collectionName, file_sha256 AS fileSha256, created_at AS createdAt, updated_at AS updatedAt</sql>
+    <insert id="upsert">INSERT INTO knowledge_text_chunk
+                        (id, heading_path, text_chunk, source_file, collection_name, file_sha256, created_at,
+                         updated_at)
+                        VALUES (#{id}, #{headingPath}, #{textChunk}, #{sourceFile}, #{collectionName}, #{fileSha256},
+                                #{createdAt}, #{updatedAt}) ON CONFLICT (id) DO
+    UPDATE SET heading_path=EXCLUDED.heading_path, text_chunk=EXCLUDED.text_chunk,
+        source_file=EXCLUDED.source_file, collection_name=EXCLUDED.collection_name,
+        file_sha256=EXCLUDED.file_sha256, updated_at=EXCLUDED.updated_at</insert>
+    <select id="selectByIds" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeTextChunkPo">
+        SELECT
+        <include refid="columns"/>
+        FROM knowledge_text_chunk WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </select>
+    <select id="selectByIdsInRepositories" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeTextChunkPo">
+        SELECT
+        <include refid="columns"/>
+        FROM knowledge_text_chunk WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+        AND split_part(source_file,'/',1) IN
+        <foreach collection="repos" item="repo" open="(" separator="," close=")">#{repo}</foreach>
+    </select>
+    <select id="selectByCollection" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeTextChunkPo">
+        SELECT
+        <include refid="columns"/>
+        FROM knowledge_text_chunk WHERE collection_name=#{collectionName}
+        <if test="search != null and search != ''">AND (heading_path LIKE CONCAT('%',#{search},'%')
+            OR text_chunk LIKE CONCAT('%',#{search},'%') OR source_file LIKE CONCAT('%',#{search},'%'))
+        </if>
+        ORDER BY updated_at DESC LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="selectByCollectionInRepositories" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeTextChunkPo">
+        SELECT
+        <include refid="columns"/>
+        FROM knowledge_text_chunk
+        WHERE collection_name=#{collectionName} AND split_part(source_file,'/',1) IN
+        <foreach collection="repos" item="repo" open="(" separator="," close=")">#{repo}</foreach>
+        <if test="search != null and search != ''">AND text_chunk ILIKE CONCAT('%',#{search},'%')</if>
+        ORDER BY id LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <delete id="deleteBySourceFile">DELETE
+                                    FROM knowledge_text_chunk
+                                    WHERE source_file = #{sourceFile}</delete>
+    <delete id="deleteAll">DELETE
+                           FROM knowledge_text_chunk</delete>
+</mapper>

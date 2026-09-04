@@ -1,9 +1,11 @@
 package io.github.jerryt92.j2agent.controller;
 
 import io.github.jerryt92.j2agent.config.security.RequiredRole;
-import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
+import io.github.jerryt92.j2agent.mapper.ext.KnowledgeRepositoryTaskMapper;
 import io.github.jerryt92.j2agent.model.repository.KnowledgeRepositoryDtos;
+import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
 import io.github.jerryt92.j2agent.service.rag.knowledge.repository.KnowledgeRepositoryService;
+import io.github.jerryt92.j2agent.service.security.ResourceAccessService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -15,21 +17,19 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * 知识库仓库管理接口。
- */
 @RestController
 @RequiredRole(UserRoleEnum.KNOWLEDGE_ADMIN)
 @RequestMapping("/v1/rest/j2agent/knowledge/repositories")
 public class KnowledgeRepositoryController {
     @org.springframework.beans.factory.annotation.Autowired
-    private io.github.jerryt92.j2agent.service.security.ResourceAccessService access;
+    private ResourceAccessService access;
     @org.springframework.beans.factory.annotation.Autowired
-    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private KnowledgeRepositoryTaskMapper taskMapper;
     private final KnowledgeRepositoryService service;
 
-    public KnowledgeRepositoryController(KnowledgeRepositoryService service) {
+    public KnowledgeRepositoryController(KnowledgeRepositoryService service, KnowledgeRepositoryTaskMapper taskMapper) {
         this.service = service;
+        this.taskMapper = taskMapper;
     }
 
     @GetMapping
@@ -62,9 +62,9 @@ public class KnowledgeRepositoryController {
     }
 
     @GetMapping("/{id}/tasks")
-    public java.util.List<java.util.Map<String,Object>> tasks(@PathVariable String id) {
-        String repositoryId=access.requireRepository(access.current(),id,2).getId();
-        return jdbc.queryForList("SELECT id,operation,status,error_message AS \"errorMessage\",created_at AS \"createdAt\",updated_at AS \"updatedAt\" FROM knowledge_repository_task WHERE repository_id=? ORDER BY created_at DESC LIMIT 50",repositoryId);
+    public java.util.List<java.util.Map<String, Object>> tasks(@PathVariable String id) {
+        String repositoryId = access.requireRepository(access.current(), id, 2).getId();
+        return taskMapper.selectRecentByRepository(repositoryId);
     }
 
     @PostMapping("/{id}/sync")

@@ -1,5 +1,6 @@
 package io.github.jerryt92.j2agent.service.security;
 
+import io.github.jerryt92.j2agent.mapper.ext.ResourcePermissionMapper;
 import io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo;
 import io.github.jerryt92.j2agent.model.security.UserContextBo;
 import io.github.jerryt92.j2agent.model.security.UserRoleEnum;
@@ -9,12 +10,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 
 /**
@@ -25,8 +26,6 @@ class ResourceAccessServiceResolveCollectionsTest {
     @Mock
     private ResourcePermissionCache cache;
     @Mock
-    private JdbcTemplate jdbc;
-    @Mock
     private LoginService login;
 
     private ResourceAccessService access;
@@ -35,7 +34,7 @@ class ResourceAccessServiceResolveCollectionsTest {
 
     @BeforeEach
     void setUp() {
-        access = spy(new ResourceAccessService(cache, jdbc, login));
+        access = spy(new ResourceAccessService(cache, mock(ResourcePermissionMapper.class), login));
         user = new UserContextBo();
         user.setUserId("user-1");
         user.setRole(UserRoleEnum.USER);

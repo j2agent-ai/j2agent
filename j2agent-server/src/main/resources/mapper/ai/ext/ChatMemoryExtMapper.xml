@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ext.ChatMemoryExtMapper">
+  <select id="existsByContextAgentIndexRoleContent" resultType="int">SELECT count(1) FROM chat_context_item
+    WHERE context_id=#{contextId} AND agent_id=#{agentId} AND message_index=#{messageIndex}
+      AND chat_role=#{chatRole} AND content=#{content}</select>
+  <insert id="insertChatContextItem">INSERT INTO chat_context_item
+                                     (message_id, context_id, agent_id, message_index, chat_role, content, feedback,
+                                      rag_infos, add_time, meta_json)
+                                     VALUES (#{messageId}, #{contextId}, #{agentId}, #{messageIndex}, #{chatRole},
+                                             #{content}, #{feedback}, #{ragInfos}, #{addTime}, #{metaJson})</insert>
+  <select id="selectLastMessageIndexForUpdate" resultType="int">SELECT COALESCE(last_message_index,-1)
+    FROM chat_context_record WHERE context_id=#{contextId} AND agent_id=#{agentId} FOR UPDATE</select>
+  <update id="updateRecordCursor">UPDATE chat_context_record SET last_message_index=#{lastMessageIndex}, update_time=#{updateTime}
+    WHERE context_id=#{contextId} AND agent_id=#{agentId}</update>
+  <update id="updateTitle">UPDATE chat_context_record SET title=#{title}, update_time=#{updateTime}
+    WHERE context_id=#{contextId} AND agent_id=#{agentId}</update>
+</mapper>

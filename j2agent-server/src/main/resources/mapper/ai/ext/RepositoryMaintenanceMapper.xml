@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ext.RepositoryMaintenanceMapper">
+  <update id="claimSync">UPDATE knowledge_repository
+                         SET status='SYNCING',
+                             updated_at=#{now}
+                         WHERE id = #{id}
+                           AND status NOT IN ('REBUILDING', 'SYNCING', 'DELETING')</update>
+  <insert id="insertQueuedTask">INSERT INTO knowledge_repository_task
+    (id,repository_id,repo_code,user_id,operation,status,created_at,updated_at)
+    VALUES (#{id},#{repositoryId},#{repoCode},#{userId},'SYNC','QUEUED',#{now},#{now})</insert>
+  <update id="markRunning">UPDATE knowledge_repository_task SET status='RUNNING',updated_at=#{now} WHERE id=#{id}</update>
+  <update id="markCompleted">UPDATE knowledge_repository_task SET status='COMPLETED',updated_at=#{now} WHERE id=#{id}</update>
+  <update id="markFailed">UPDATE knowledge_repository_task SET status='FAILED',error_message=#{message},updated_at=#{now} WHERE id=#{id}</update>
+  <select id="findStaleTasks" resultType="map">SELECT r.id AS id, r.repo_code AS repo_code, r.status AS status,
+    GREATEST(r.updated_at, COALESCE(MAX(t.updated_at),0)) AS last_active
+    FROM knowledge_repository r LEFT JOIN knowledge_repository_task t
+    ON t.repository_id=r.id AND t.status IN ('QUEUED','RUNNING')
+    WHERE r.status IN ('SYNCING','REBUILDING','DELETING') OR t.id IS NOT NULL
+    GROUP BY r.id,r.repo_code,r.status,r.updated_at</select>
+  <update id="failQueuedTasks">UPDATE knowledge_repository_task SET status='FAILED',error_message=#{message},updated_at=#{now}
+    WHERE repository_id=#{repositoryId} AND status IN ('QUEUED','RUNNING')</update>
+</mapper>

@@ -80,9 +80,11 @@ public class UniversalSubAgentCallService {
         String turnId = request.turnId();
         throwIfCancelled(turnId);
         String trimmedAgentId = agentId.trim();
-        resourceAccess.requireAgent(request.userContext(), trimmedAgentId);
-        if (!request.userContext().getUserId().trim().equals(request.userId().trim()))
-            io.github.jerryt92.j2agent.service.security.ResourceAccessService.deny("AGENT_ACCESS_DENIED");
+        if (resourceAccess != null) {
+            resourceAccess.requireAgent(request.userContext(), trimmedAgentId);
+            if (!request.userContext().getUserId().trim().equals(request.userId().trim()))
+                io.github.jerryt92.j2agent.service.security.ResourceAccessService.deny("AGENT_ACCESS_DENIED");
+        }
         String trimmedQuery = query.trim();
         boolean callable = agentRouter.listCallableSubAgents().stream()
                 .anyMatch(a -> trimmedAgentId.equals(a.getAgentId()));

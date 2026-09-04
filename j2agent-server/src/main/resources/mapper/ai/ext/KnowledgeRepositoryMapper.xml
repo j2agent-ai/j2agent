@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.KnowledgeRepositoryMapper">
+    <sql id="columns">id
+    , creator_user_id AS creatorUserId, is_public AS isPublic, repo_code AS repoCode, type, protocol, enabled,
+    update_interval_minutes AS updateIntervalMinutes, status, remote_url AS remoteUrl, default_branch AS defaultBranch,
+    last_revision AS lastRevision, last_revision_message AS lastRevisionMessage, last_revision_author AS lastRevisionAuthor,
+    last_revision_time AS lastRevisionTime, last_sync_time AS lastSyncTime, last_error AS lastError,
+    protocol_config::text AS protocolConfig, display_name AS displayName, metadata_config::text AS metadataConfig,
+    credential_config_cipher AS credentialConfigCipher, created_at AS createdAt, updated_at AS updatedAt</sql>
+    <select id="selectAll" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo">SELECT
+        <include refid="columns"/>
+        FROM knowledge_repository ORDER BY created_at DESC
+    </select>
+    <select id="selectRemoteAll" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo">SELECT
+        <include refid="columns"/>
+        FROM knowledge_repository WHERE type='REMOTE' ORDER BY created_at DESC
+    </select>
+    <select id="selectEnabledAll" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo">SELECT
+        <include refid="columns"/>
+        FROM knowledge_repository WHERE enabled=true ORDER BY created_at DESC
+    </select>
+    <select id="selectById" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo">SELECT
+        <include refid="columns"/>
+        FROM knowledge_repository WHERE id=#{id} LIMIT 1
+    </select>
+    <select id="selectByRepoCode" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo">SELECT
+        <include refid="columns"/>
+        FROM knowledge_repository WHERE repo_code=#{repoCode} LIMIT 1
+    </select>
+    <select id="selectDueRemote" resultType="io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo">SELECT
+        <include refid="columns"/>
+        FROM knowledge_repository WHERE enabled=true AND type='REMOTE' AND (last_sync_time IS NULL OR last_sync_time
+        &lt;= #{dueBefore}) ORDER BY COALESCE(last_sync_time,0), created_at
+    </select>
+    <insert id="insert">INSERT INTO knowledge_repository (id, repo_code, type, protocol, enabled,
+                                                          update_interval_minutes, status, remote_url, default_branch,
+                                                          last_revision, last_revision_message, last_revision_author,
+                                                          last_revision_time, last_sync_time, last_error,
+                                                          protocol_config, display_name, metadata_config,
+                                                          credential_config_cipher, created_at, updated_at,
+                                                          creator_user_id, is_public)
+                        VALUES (#{id}, #{repoCode}, #{type}, #{protocol}, #{enabled}, #{updateIntervalMinutes},
+                                #{status}, #{remoteUrl}, #{defaultBranch}, #{lastRevision}, #{lastRevisionMessage},
+                                #{lastRevisionAuthor}, #{lastRevisionTime}, #{lastSyncTime}, #{lastError},
+                                CAST(#{protocolConfig} AS jsonb), #{displayName}, CAST(#{metadataConfig} AS jsonb),
+                                #{credentialConfigCipher}, #{createdAt}, #{updatedAt}, #{creatorUserId},
+                                #{isPublic})</insert>
+    <update id="updateConfig">UPDATE knowledge_repository
+                              SET repo_code=#{repoCode},
+                                  type=#{type},
+                                  protocol=#{protocol},
+                                  enabled=#{enabled},
+                                  update_interval_minutes=#{updateIntervalMinutes},
+                                  remote_url=#{remoteUrl},
+                                  default_branch=#{defaultBranch},
+                                  protocol_config=CAST(#{protocolConfig} AS jsonb),
+                                  display_name=#{displayName},
+                                  metadata_config=CAST(#{metadataConfig} AS jsonb),
+                                  credential_config_cipher=#{credentialConfigCipher},
+                                  updated_at=#{updatedAt}
+                              WHERE id = #{id}</update>
+    <update id="updateStatus">UPDATE knowledge_repository
+                              SET status=#{status},
+                                  last_error=#{lastError},
+                                  updated_at=#{updatedAt}
+                              WHERE id = #{id}</update>
+    <update id="updateSyncResult">UPDATE knowledge_repository
+                                  SET status=#{status},
+                                      last_revision=#{lastRevision},
+                                      last_revision_message=#{lastRevisionMessage},
+                                      last_revision_author=#{lastRevisionAuthor},
+                                      last_revision_time=#{lastRevisionTime},
+                                      last_sync_time=#{lastSyncTime},
+                                      last_error=#{lastError},
+                                      updated_at=#{updatedAt}
+                                  WHERE id = #{id}</update>
+    <delete id="deleteById">DELETE
+                            FROM knowledge_repository
+                            WHERE id = #{id}</delete>
+</mapper>

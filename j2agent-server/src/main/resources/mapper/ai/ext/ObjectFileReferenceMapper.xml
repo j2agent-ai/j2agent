@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.github.jerryt92.j2agent.mapper.ObjectFileReferenceMapper">
+  <insert id="insertIgnore">
+      INSERT INTO object_file_reference (id, file_id, business_type, business_id, owner_id, created_at)
+      VALUES (#{id}, #{fileId}, #{businessType}, #{businessId}, #{ownerId},
+              #{createdAt}) ON CONFLICT (file_id, business_type, business_id) DO NOTHING
+  </insert>
+  <select id="countByFileId" resultType="int">
+    SELECT COUNT(1) FROM object_file_reference WHERE file_id = #{fileId}
+  </select>
+  <select id="selectFileIdsByBusinessPrefix" resultType="string">
+    SELECT DISTINCT file_id FROM object_file_reference
+    WHERE business_type = #{businessType} AND business_id LIKE CONCAT(#{businessIdPrefix}, '%')
+  </select>
+  <delete id="deleteByBusinessPrefix">
+    DELETE FROM object_file_reference
+    WHERE business_type = #{businessType} AND business_id LIKE CONCAT(#{businessIdPrefix}, '%')
+  </delete>
+  <delete id="deleteByFileId">
+    DELETE FROM object_file_reference WHERE file_id = #{fileId}
+  </delete>
+</mapper>

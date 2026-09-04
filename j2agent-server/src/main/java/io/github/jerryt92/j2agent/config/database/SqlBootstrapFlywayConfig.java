@@ -9,8 +9,6 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 
 /**
  * 全新库：在 Flyway 迁移前执行 {@code sql/schema} 与 {@code sql/data} 引导脚本。
@@ -37,22 +35,12 @@ public class SqlBootstrapFlywayConfig {
     }
 
     private static boolean needsBootstrap(DataSource dataSource) {
-        String sql = """
-                SELECT COUNT(*) FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_name = ?
-                """;
         try (Connection connection = dataSource.getConnection();
-             PreparedStatement ps = connection.prepareStatement(sql)) {
-            ps.setString(1, CORE_TABLE);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getInt(1) == 0;
-                }
-            }
+             var tables = connection.getMetaData().getTables(null, "public", CORE_TABLE, new String[]{"TABLE"})) {
+            return !tables.next();
         } catch (Exception e) {
             throw new IllegalStateException("Failed to detect database bootstrap state", e);
         }
-        return true;
     }
 
     private static void runScript(DataSource dataSource, String classpathLocation) {

@@ -96,9 +96,11 @@ public class UniversalAssistantOrchestratorService {
             return OrchestrationOutcome.CONTINUE;
         }
         String manualOrchestrateAgentId = StringUtils.trimToNull(request.manualOrchestrateAgentId());
-        java.util.Set<String> allowed = resourceAccess.allowedAgents(request.userContext());
+        java.util.Set<String> allowed = resourceAccess == null
+                ? java.util.Set.of()
+                : resourceAccess.allowedAgents(request.userContext());
         List<AiAgent> callableSubAgents = agentRouter.listCallableSubAgents().stream()
-                .filter(a -> request.userContext().isAdmin() || allowed.contains(a.getAgentId())).toList();
+                .filter(a -> resourceAccess == null || request.userContext().isAdmin() || allowed.contains(a.getAgentId())).toList();
         if (callableSubAgents.isEmpty()) {
             if (manualOrchestrateAgentId != null) {
                 throw new IllegalArgumentException("Unsupported agentId: " + manualOrchestrateAgentId);

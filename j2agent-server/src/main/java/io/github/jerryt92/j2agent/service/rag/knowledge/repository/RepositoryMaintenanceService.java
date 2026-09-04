@@ -2,29 +2,41 @@ package io.github.jerryt92.j2agent.service.rag.knowledge.repository;
 
 import io.github.jerryt92.j2agent.config.redis.RedisKeyNamespaces;
 import io.github.jerryt92.j2agent.mapper.KnowledgeRepositoryMapper;
+import io.github.jerryt92.j2agent.mapper.ext.RepositoryMaintenanceMapper;
 import io.github.jerryt92.j2agent.model.po.KnowledgeRepositoryPo;
 import io.github.jerryt92.j2agent.model.repository.KnowledgeRepositoryDtos;
-import io.github.jerryt92.j2agent.service.rag.knowledge.repo.*;
+import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMaintenanceLockService;
+import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoMetadataService;
+import io.github.jerryt92.j2agent.service.rag.knowledge.repo.KnowledgeRepoSyncService;
 import io.github.jerryt92.j2agent.utils.UUIDv7Utils;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.redisson.api.RedissonClient;
 import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.*;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
-/** 按库维护：仅增量同步，不提供分库重建；全库重建由管理员全局入口执行。 */
+/**
+ * 按库维护：仅增量同步，不提供分库重建；全库重建由管理员全局入口执行。
+ */
 @Slf4j
 @Service
 public class RepositoryMaintenanceService {
@@ -32,33 +44,43 @@ public class RepositoryMaintenanceService {
     private final KnowledgeRepoMetadataService metadata;
     private final KnowledgeRepoMaintenanceLockService locks;
     private final KnowledgeRepositoryMapper mapper;
-    private final JdbcTemplate jdbc;
+    private final RepositoryMaintenanceMapper taskMapper;
     private final RedissonClient redis;
     private final RedisKeyNamespaces keys;
     private final ExecutorService executor = Executors.newFixedThreadPool(4, r -> {
-        Thread t = new Thread(r, "repository-maintenance"); t.setDaemon(true); return t;
+        Thread t = new Thread(r, "repository-maintenance");
+        t.setDaemon(true);
+        return t;
     });
     private final ConcurrentHashMap<String, Future<?>> runningTasks = new ConcurrentHashMap<>();
 
     public RepositoryMaintenanceService(KnowledgeRepoSyncService sync, KnowledgeRepoMetadataService metadata,
-            KnowledgeRepoMaintenanceLockService locks, KnowledgeRepositoryMapper mapper, JdbcTemplate jdbc,
-            RedissonClient redis, RedisKeyNamespaces keys) {
-        this.sync=sync; this.metadata=metadata; this.locks=locks; this.mapper=mapper; this.jdbc=jdbc; this.redis=redis; this.keys=keys;
+                                        KnowledgeRepoMaintenanceLockService locks, KnowledgeRepositoryMapper mapper, RepositoryMaintenanceMapper taskMapper,
+                                        RedissonClient redis, RedisKeyNamespaces keys) {
+        this.sync = sync;
+        this.metadata = metadata;
+        this.locks = locks;
+        this.mapper = mapper;
+        this.taskMapper = taskMapper;
+        this.redis = redis;
+        this.keys = keys;
     }
+
     public <T> T exclusiveRepository(String id, Supplier<T> action) {
         RLock gate = locks.readLock(locks.repoRootHash(metadata.getRepoRootPath()));
-        RLock repo = redis.getLock(keys.key("knowledge-repo:repository:"+id));
-        boolean g=false, r=false;
+        RLock repo = redis.getLock(keys.key("knowledge-repo:repository:" + id));
+        boolean g = false, r = false;
         try {
-            g=gate.tryLock(5, TimeUnit.SECONDS);
-            if (g) r=repo.tryLock(5, TimeUnit.SECONDS);
+            g = gate.tryLock(5, TimeUnit.SECONDS);
+            if (g) r = repo.tryLock(5, TimeUnit.SECONDS);
             if (!r) throw new ResponseStatusException(HttpStatus.CONFLICT, "KNOWLEDGE_BUSY");
             return action.get();
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt(); throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Maintenance interrupted", e);
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Maintenance interrupted", e);
         } finally {
-            if(r && repo.isHeldByCurrentThread()) repo.unlock();
-            if(g && gate.isHeldByCurrentThread()) gate.unlock();
+            if (r && repo.isHeldByCurrentThread()) repo.unlock();
+            if (g && gate.isHeldByCurrentThread()) gate.unlock();
         }
     }
 
@@ -67,33 +89,32 @@ public class RepositoryMaintenanceService {
      */
     public KnowledgeRepositoryDtos.SyncResponse submit(KnowledgeRepositoryPo po, String userId, Runnable before) {
         return exclusiveRepository(po.getId(), () -> {
-            String taskId=UUIDv7Utils.randomUUIDv7(); long now=System.currentTimeMillis();
-            int claimed=jdbc.update("UPDATE knowledge_repository SET status=?,updated_at=? WHERE id=? AND status NOT IN ('REBUILDING','SYNCING','DELETING')",
-                    "SYNCING",now,po.getId());
-            if(claimed!=1) throw new ResponseStatusException(HttpStatus.CONFLICT,"KNOWLEDGE_BUSY");
-            jdbc.update("INSERT INTO knowledge_repository_task(id,repository_id,repo_code,user_id,operation,status,created_at,updated_at) VALUES (?,?,?,?,?,'QUEUED',?,?)",
-                    taskId,po.getId(),po.getRepoCode(),userId,"SYNC",now,now);
+            String taskId = UUIDv7Utils.randomUUIDv7();
+            long now = System.currentTimeMillis();
+            int claimed = taskMapper.claimSync(po.getId(), now);
+            if (claimed != 1) throw new ResponseStatusException(HttpStatus.CONFLICT, "KNOWLEDGE_BUSY");
+            taskMapper.insertQueuedTask(taskId, po.getId(), po.getRepoCode(), userId, now);
             AtomicReference<Future<?>> running = new AtomicReference<>();
             Future<?> future = executor.submit(() -> {
                 try {
                     exclusiveRepository(po.getId(), () -> {
-                        jdbc.update("UPDATE knowledge_repository_task SET status='RUNNING',updated_at=? WHERE id=?",System.currentTimeMillis(),taskId);
+                        taskMapper.markRunning(taskId, System.currentTimeMillis());
                         before.run();
                         // A remote pull may update repository metadata/status. Restore maintenance visibility.
-                        mapper.updateStatus(po.getId(),"SYNCING",null,System.currentTimeMillis());
-                        sync.executeRepositorySync(po.getRepoCode(),() -> !Thread.currentThread().isInterrupted());
-                        mapper.updateStatus(po.getId(),"IDLE",null,System.currentTimeMillis());
-                        jdbc.update("UPDATE knowledge_repository_task SET status='COMPLETED',updated_at=? WHERE id=?",System.currentTimeMillis(),taskId);
+                        mapper.updateStatus(po.getId(), "SYNCING", null, System.currentTimeMillis());
+                        sync.executeRepositorySync(po.getRepoCode(), () -> !Thread.currentThread().isInterrupted());
+                        mapper.updateStatus(po.getId(), "IDLE", null, System.currentTimeMillis());
+                        taskMapper.markCompleted(taskId, System.currentTimeMillis());
                         return null;
                     });
-                } catch(Exception e) {
+                } catch (Exception e) {
                     if (Thread.currentThread().isInterrupted() || e instanceof CancellationException
                             || e.getCause() instanceof CancellationException) {
                         logInterrupted(po.getRepoCode(), taskId, e);
                         return;
                     }
-                    mapper.updateStatus(po.getId(),"FAILED",e.getMessage(),System.currentTimeMillis());
-                    jdbc.update("UPDATE knowledge_repository_task SET status='FAILED',error_message=?,updated_at=? WHERE id=?",e.getMessage(),System.currentTimeMillis(),taskId);
+                    mapper.updateStatus(po.getId(), "FAILED", e.getMessage(), System.currentTimeMillis());
+                    taskMapper.markFailed(taskId, e.getMessage(), System.currentTimeMillis());
                 } finally {
                     runningTasks.remove(po.getId(), running.get());
                 }
@@ -103,8 +124,11 @@ public class RepositoryMaintenanceService {
             if (future.isDone()) {
                 runningTasks.remove(po.getId(), future);
             }
-            KnowledgeRepositoryDtos.SyncResponse response=new KnowledgeRepositoryDtos.SyncResponse();
-            response.setSuccess(true); response.setMessage("已提交按库维护任务"); response.setTaskId(taskId); return response;
+            KnowledgeRepositoryDtos.SyncResponse response = new KnowledgeRepositoryDtos.SyncResponse();
+            response.setSuccess(true);
+            response.setMessage("已提交按库维护任务");
+            response.setTaskId(taskId);
+            return response;
         });
     }
 
@@ -129,7 +153,9 @@ public class RepositoryMaintenanceService {
         }
     }
 
-    /** 库表停在维护态但已无人执行时，判定为遗留状态的最小静默时长 */
+    /**
+     * 库表停在维护态但已无人执行时，判定为遗留状态的最小静默时长
+     */
     private static final long STALE_TASK_MILLIS = 120_000L;
     private static final Set<String> BUSY_STATUS = Set.of("SYNCING", "REBUILDING", "DELETING");
 
@@ -150,15 +176,7 @@ public class RepositoryMaintenanceService {
         long now = System.currentTimeMillis();
         List<Map<String, Object>> rows;
         try {
-            rows = jdbc.queryForList("""
-                    SELECT r.id AS id, r.repo_code AS repo_code, r.status AS status,
-                           GREATEST(r.updated_at, COALESCE(MAX(t.updated_at), 0)) AS last_active
-                    FROM knowledge_repository r
-                    LEFT JOIN knowledge_repository_task t
-                           ON t.repository_id = r.id AND t.status IN ('QUEUED', 'RUNNING')
-                    WHERE r.status IN ('SYNCING', 'REBUILDING', 'DELETING') OR t.id IS NOT NULL
-                    GROUP BY r.id, r.repo_code, r.status, r.updated_at
-                    """);
+            rows = taskMapper.findStaleTasks();
         } catch (RuntimeException e) {
             log.warn("扫描遗留按库任务失败", e);
             return;
@@ -180,9 +198,7 @@ public class RepositoryMaintenanceService {
             if (redis.getLock(keys.key("knowledge-repo:repository:" + id)).isLocked()) {
                 continue;
             }
-            int failedTasks = jdbc.update(
-                    "UPDATE knowledge_repository_task SET status='FAILED',error_message=?,updated_at=? WHERE repository_id=? AND status IN ('QUEUED','RUNNING')",
-                    "任务已被服务重启中断", now, id);
+            int failedTasks = taskMapper.failQueuedTasks(id, "任务已被服务重启中断", now);
             if (BUSY_STATUS.contains(status)) {
                 mapper.updateStatus(id, "IDLE", "上次维护被服务重启中断，状态已重置", now);
             }
@@ -193,11 +209,16 @@ public class RepositoryMaintenanceService {
     }
 
     private void logInterrupted(String repoCode, String taskId, Exception e) {
-        jdbc.update("UPDATE knowledge_repository_task SET status='FAILED',error_message=?,updated_at=? WHERE id=?",
-                "任务已中断", System.currentTimeMillis(), taskId);
+        taskMapper.markFailed(taskId, "任务已中断", System.currentTimeMillis());
         log.info("按库维护被中断: repoCode={}, taskId={}", repoCode, taskId, e);
     }
 
-    public void cleanup(KnowledgeRepositoryPo po) { sync.deleteRepositoryData(po.getRepoCode()); }
-    @PreDestroy public void close() { executor.shutdownNow(); }
+    public void cleanup(KnowledgeRepositoryPo po) {
+        sync.deleteRepositoryData(po.getRepoCode());
+    }
+
+    @PreDestroy
+    public void close() {
+        executor.shutdownNow();
+    }
 }
