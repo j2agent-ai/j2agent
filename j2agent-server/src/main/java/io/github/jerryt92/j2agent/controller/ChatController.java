@@ -66,6 +66,9 @@ import java.util.Objects;
 public class ChatController extends AbstractWebSocketHandler implements ChatApi {
     private static final String AGENT_ID_PARAM = "agent-id";
     private static final String AGENT_ID_ATTRIBUTE = "agentId";
+    private static final String BACKGROUND_ATTRIBUTE = "chatBackground";
+    private static final String OBSERVER_ATTRIBUTE = "chatObserver";
+    private static final String SERVER_COMPLETE_ATTRIBUTE = "chatServerComplete";
 
     private final ChatContextService chatContextService;
     private final ChatService chatService;
@@ -212,6 +215,7 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
         }
         bindWebSocketCallback(session, callback);
         if (isTrue(getParam("resume", Objects.requireNonNull(session.getUri()).toString()))) {
+            session.getAttributes().put(OBSERVER_ATTRIBUTE, true);
             chatCallbackRegistry.register(contextId, agentId, callback.subscriptionId, callback);
             sendConnectedNotice(session, contextId);
             handleResumeConnection(contextId, agentId, callback.subscriptionId);
@@ -220,7 +224,10 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
 
     @Override
     protected void handleTextMessage(WebSocketSession wsSession, TextMessage message) {
-        ChatRequestDto chatRequestDto = JSONObject.parseObject(message.getPayload(), ChatRequestDto.class);
+        ChatRequestDto chatRequestDto = parseWsRequest(message.getPayload());
+        // One connection uses the background mode of its latest submitted message.
+        wsSession.getAttributes().put(BACKGROUND_ATTRIBUTE, Boolean.TRUE.equals(chatRequestDto.getBackground()));
+        wsSession.getAttributes().put(OBSERVER_ATTRIBUTE, false);
         String contextId = (String) wsSession.getAttributes().get("contextId");
         try {
             AgentUiEventEnvelope agentUiEventEnvelope = new AgentUiEventEnvelope()
@@ -277,6 +284,14 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
                 enqueueResult.errorCode(), new IllegalStateException(enqueueResult.errorMessage()));
     }
 
+    static ChatRequestDto parseWsRequest(String payload) {
+        JSONObject json = JSONObject.parseObject(payload);
+        boolean background = Boolean.TRUE.equals(json.remove("background"));
+        ChatRequestDto request = json.toJavaObject(ChatRequestDto.class);
+        request.setBackground(background);
+        return request;
+    }
+
     private void bindWebSocketCallback(WebSocketSession wsSession,
                                        ChatCallback<AgentUiEventEnvelope> chatChatCallback) {
         chatChatCallback.responseCall = chatResponse -> {
@@ -294,7 +309,11 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
                 closeSession(wsSession);
             }
         };
-        chatChatCallback.completeCall = () -> closeSession(wsSession);
+        chatChatCallback.completeCall = () -> {
+            // Completing an answer must not turn the server's own close into a user stop.
+            wsSession.getAttributes().put(SERVER_COMPLETE_ATTRIBUTE, true);
+            closeSession(wsSession);
+        };
     }
 
     private void sendConnectedNotice(WebSocketSession session, String contextId) {
@@ -444,7 +463,10 @@ public class ChatController extends AbstractWebSocketHandler implements ChatApi 
             return;
         }
         if (StringUtils.isNotBlank(contextId) && StringUtils.isNotBlank(agentId)) {
-            if ("user interrupt".equals(status.getReason())) {
+            if ("user interrupt".equals(status.getReason())
+                    || (!Boolean.TRUE.equals(session.getAttributes().get(SERVER_COMPLETE_ATTRIBUTE))
+                    && !Boolean.TRUE.equals(session.getAttributes().get(OBSERVER_ATTRIBUTE))
+                    && !Boolean.TRUE.equals(session.getAttributes().get(BACKGROUND_ATTRIBUTE)))) {
                 chatCallbackRegistry.markCancelled(contextId, agentId, chatCallback.subscriptionId);
                 stopSession(contextId, agentId);
             }
