@@ -246,6 +246,18 @@ Most open-source Agent platforms are Python-based. J2Agent targets Java develope
 - **AgentUi event stream**: WebSocket `AgentUiEventEnvelope`; `AgentTurnStateMachine`, tool calls, and skill loading visualization.
 - **JDK 21**: Virtual threads for concurrency; Docker Compose for PostgreSQL / Redis / Milvus.
 
+## WebSocket Chat Disconnection
+
+Each message sent to `/ws/rest/j2agent/chat` accepts an optional `background` field. Only the JSON boolean `true` allows that task to continue after its sending connection disconnects:
+
+```json
+{"contextId":"conversation-id","messages":[{"role":"user","content":"Hello"}],"background":true}
+```
+
+Missing, `null`, `false`, string `"true"`, and other types mean foreground mode. The latest message determines the connection's mode: an ordinary disconnect invokes the existing session stop logic unless background mode is enabled. Stopping affects the entire `contextId + agentId` session, regardless of which connection submitted each task. Disconnecting a `resume=true` observer, or closing a connection on the server after an answer completes, does not trigger a stop. The explicit stop endpoint and the close reason `user interrupt` always stop the entire session, including background tasks.
+
+Existing clients that need tasks to survive disconnection must send `background: true` in every message. Tasks still use the existing queue; resuming execution after a server restart is not supported.
+
 ## To Be Improved
 
 - **Rerank**: Reranking for retrieval results.

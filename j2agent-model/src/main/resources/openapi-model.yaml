@@ -973,6 +973,10 @@ components:
     ChatRequestDto:
       type: object
       properties:
+        background:
+          type: boolean
+          default: false
+          description: 仅 WebSocket 消息中显式传入 JSON 布尔 true 时允许断线后继续；连接按最近一条消息决定后台模式，否则断线调用会话停止逻辑
         contextId:
           type: string
           description: 会话ID

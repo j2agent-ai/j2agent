@@ -260,6 +260,18 @@ graph TD
 - **AgentUi 事件流**：WebSocket 推送 `AgentUiEventEnvelope`；`AgentTurnStateMachine`、工具调用与 Skill 加载可视化。
 - **JDK 21**：虚拟线程提升并发；Docker Compose 一键部署 PostgreSQL / Redis / Milvus。
 
+## WebSocket 聊天断线行为
+
+`/ws/rest/j2agent/chat` 的每条消息可传 `background`：只有 JSON 布尔值 `true` 允许任务断线后继续，例如：
+
+```json
+{"contextId":"会话ID","messages":[{"role":"user","content":"你好"}],"background":true}
+```
+
+未传、`null`、`false`、字符串 `"true"` 或其他类型都按非后台模式处理。连接以最近一条消息的 `background` 为准：普通断线时，非后台模式直接调用现有会话停止逻辑，后台模式继续执行。停止作用于同一 `contextId + agentId` 的整个会话，不区分任务来源。`resume=true` 纯观察连接断开，以及回答完成后服务端主动关闭连接，不触发停止。显式停止接口或关闭原因 `user interrupt` 始终停止整个会话，包括后台任务。
+
+现有客户端如需保留断线后继续执行的行为，必须逐条传入 `background: true`。任务仍由现有队列执行，不支持服务重启后续跑。
+
 ## 待完善
 
 - **Rerank**：提供 Rerank 功能，以实现对检索结果的排序和过滤。
