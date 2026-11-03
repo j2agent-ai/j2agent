@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -38,6 +39,14 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(ex.getStatusCode()).body(errorBody(message));
     }
 
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, String>> handleNoResourceFound(NoResourceFoundException ex) {
+        // 未匹配到控制器的 API 请求也会落入静态资源处理器，不能提示为 UI 缺失。
+        boolean apiPath = ex.getResourcePath().matches("/?v\\d+(?:/.*)?");
+        String code = apiPath ? ErrorConstants.COMMON_RESOURCE_NOT_FOUND : ErrorConstants.UI_RESOURCE_NOT_FOUND;
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody(apiMessageService.resolve(code)));
+    }
+
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<Map<String, String>> handleDataAccess(DataAccessException ex) {
         log.error("data access failed", ex);
@@ -57,9 +66,7 @@ public class ApiExceptionHandler {
     }
 
     private Map<String, String> systemErrorBody() {
-        String traceId = TraceIdContext.currentOrNew();
-        String message = apiMessageService.resolve(ErrorConstants.COMMON_INTERNAL_ERROR, new Object[]{traceId});
-        return errorBody(message, traceId);
+        return errorBody(apiMessageService.resolve(ErrorConstants.COMMON_INTERNAL_ERROR));
     }
 
     private static Map<String, String> errorBody(String message) {
