@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 通用助手子智能体调用（无 {@code @Tool}），由编排 Hook 直接调用。
- * 委派调用使用 {@code subAgentCallRun=true}，不读写子智能体会话记忆，避免聊天记录落入专业 Agent 键。
+ * 委派调用使用 {@code subAgentCallRun=true} 标识调用来源，并按子智能体会话键读取和追加历史记忆。
  */
 @Slf4j
 @Service

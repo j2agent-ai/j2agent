@@ -6,7 +6,6 @@ import io.github.jerryt92.j2agent.logging.llm.AgentRunLogSnapshot;
 import io.github.jerryt92.j2agent.service.llm.chat.ChatTurnCancellationRegistry;
 import io.github.jerryt92.j2agent.service.llm.agent.core.AgentRunContext;
 import io.github.jerryt92.j2agent.service.llm.memory.ConversationIdCodec;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClientMessageAggregator;
 import org.springframework.ai.chat.client.ChatClientRequest;
@@ -33,8 +32,8 @@ import java.util.Map;
 
 /**
  * 在 Spring AI {@link org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor} 语义基础上，
- * 适配 Alibaba ReAct：首轮模型调用合并持久化记忆与图内 messages；工具循环后续跳仅使用图内累积 messages，
- * 避免每轮再次 prepend {@link ChatMemory#get} 导致重复。
+ * 适配 Alibaba ReAct：Agent 入口已将历史放入 graph 时，直接使用图内完整 messages 并持久化新增消息；
+ * 未标记的旧调用路径仍在首轮合并记忆，避免工具循环每轮再次 prepend {@link ChatMemory#get} 导致重复。
  * <p>
  * 在 {@link #before} 内会将 {@link ChatMemory#CONVERSATION_ID} 写入请求 context（优先用户消息 metadata，
  * 其次当前线程 {@link #setConversationId} 绑定值）；流式场景下 Advisor 常在 {@code publishOn} 后执行，
@@ -49,8 +48,11 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
      */
     public static final String META_USER_MESSAGE_PRE_PERSISTED = "userMessagePrePersisted";
 
+    /** 当前用户消息 metadata 键：Agent 入口已将窗口历史放入 graph，无须 Advisor 再次拼接。 */
+    public static final String META_GRAPH_HISTORY_PREPARED = "graphHistoryPrepared";
+
     /**
-     * 用户消息 metadata 键：子智能体无状态调用时为 true，Advisor 跳过子智能体记忆读写。
+     * 用户消息 metadata 键：标识委派子智能体调用；与直接聊天统一读取和持久化会话记忆。
      */
     public static final String META_SUB_AGENT_CALL_RUN = "subAgentCallRun";
 
@@ -70,13 +72,6 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
      * （聚合后的 response context 往往不含 {@link ChatMemory#CONVERSATION_ID}）。
      */
     private static final ThreadLocal<String> ACTIVE_CONVERSATION_ID = new ThreadLocal<>();
-
-    private static final ThreadLocal<Boolean> ACTIVE_SUB_AGENT_CALL_RUN = new ThreadLocal<>();
-
-    /**
-     * 单次 Agent stream 内子智能体委派标记，覆盖 ReAct 后续轮（prompt 可能不再含 UserMessage metadata）。
-     */
-    private static final ThreadLocal<Boolean> STREAM_SUB_AGENT_CALL_RUN = new ThreadLocal<>();
 
     private final ChatMemory chatMemory;
 
@@ -110,8 +105,6 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
     public static void clear() {
         THREAD_CONVERSATION_ID.remove();
         ACTIVE_CONVERSATION_ID.remove();
-        ACTIVE_SUB_AGENT_CALL_RUN.remove();
-        STREAM_SUB_AGENT_CALL_RUN.remove();
     }
 
     /**
@@ -192,9 +185,6 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
         if (!StringUtils.hasText(conversationId) || !conversationId.contains(":")) {
             return false;
         }
-        if (conversationId.startsWith("delegate:")) {
-            return false;
-        }
         try {
             ConversationIdCodec.parse(conversationId);
             return true;
@@ -268,85 +258,22 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
     }
 
     private static boolean isUserMessagePrePersisted(List<Message> instructions) {
-        if (instructions == null) {
-            return false;
-        }
-        for (Message message : instructions) {
-            if (!(message instanceof UserMessage userMessage)) {
-                continue;
-            }
-            Map<String, Object> metadata = userMessage.getMetadata();
-            if (metadata != null
-                    && isTruthyMetadataFlag(metadata.get(META_USER_MESSAGE_PRE_PERSISTED))) {
-                return true;
-            }
-        }
-        return false;
+        return hasCurrentUserFlag(instructions, META_USER_MESSAGE_PRE_PERSISTED);
     }
 
-    private static boolean isSubAgentCallRun(List<Message> instructions) {
-        if (instructions == null) {
-            return false;
-        }
-        for (Message message : instructions) {
-            if (!(message instanceof UserMessage userMessage)) {
-                continue;
-            }
-            Map<String, Object> metadata = userMessage.getMetadata();
-            if (metadata == null) {
-                continue;
-            }
-            if (isTruthyMetadataFlag(metadata.get(META_SUB_AGENT_CALL_RUN))
-                    || isTruthyMetadataFlag(metadata.get(META_DELEGATE_RUN))) {
-                return true;
-            }
-        }
-        return false;
+    private static boolean hasCurrentUserFlag(List<Message> instructions, String flag) {
+        UserMessage userMessage = findLastUserMessage(instructions);
+        return userMessage != null && isTruthyMetadataFlag(userMessage.getMetadata().get(flag));
     }
 
     private static boolean isTruthyMetadataFlag(Object flag) {
         return Boolean.TRUE.equals(flag) || "true".equalsIgnoreCase(String.valueOf(flag));
     }
 
-    private static boolean isSubAgentCallRunFromContext(Map<String, Object> context) {
-        return context != null && isTruthyMetadataFlag(context.get(META_SUB_AGENT_CALL_RUN));
-    }
-
-    /**
-     * 子智能体无状态委派：跳过记忆读写（含 ReAct 工具循环后续轮）。
-     */
-    private static boolean shouldSkipMemoryForSubAgentCall(Map<String, Object> context, List<Message> instructions) {
-        if (Boolean.TRUE.equals(STREAM_SUB_AGENT_CALL_RUN.get())) {
-            return true;
-        }
-        if (isSubAgentCallRunFromContext(context)) {
-            return true;
-        }
-        return isSubAgentCallRun(instructions);
-    }
-
-    private static ChatClientRequest markSubAgentCallRunAndReturn(ChatClientRequest requestWithConversationId) {
-        STREAM_SUB_AGENT_CALL_RUN.set(true);
-        ACTIVE_SUB_AGENT_CALL_RUN.set(true);
-        ACTIVE_CONVERSATION_ID.remove();
-        var contextBuilder = new java.util.HashMap<>(requestWithConversationId.context());
-        contextBuilder.put(META_SUB_AGENT_CALL_RUN, Boolean.TRUE);
-        return requestWithConversationId.mutate().context(contextBuilder).build();
-    }
-
-    private static boolean isSubAgentCallRunActive(Map<String, Object> context) {
-        return Boolean.TRUE.equals(STREAM_SUB_AGENT_CALL_RUN.get())
-                || Boolean.TRUE.equals(ACTIVE_SUB_AGENT_CALL_RUN.get())
-                || isSubAgentCallRunFromContext(context);
-    }
-
     @Override
     public ChatClientRequest before(ChatClientRequest chatClientRequest, AdvisorChain advisorChain) {
         ChatClientRequest requestWithConversationId = ensureConversationIdInContext(chatClientRequest);
         List<Message> instructions = requestWithConversationId.prompt().getInstructions();
-        if (shouldSkipMemoryForSubAgentCall(requestWithConversationId.context(), instructions)) {
-            return markSubAgentCallRunAndReturn(requestWithConversationId);
-        }
         String conversationId = resolvePersistableConversationId(requestWithConversationId.context(), instructions);
         if (!StringUtils.hasText(conversationId)) {
             ACTIVE_CONVERSATION_ID.remove();
@@ -355,8 +282,9 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
         }
         ACTIVE_CONVERSATION_ID.set(conversationId);
 
+        boolean graphHistoryPrepared = hasCurrentUserFlag(instructions, META_GRAPH_HISTORY_PREPARED);
         List<Message> processedMessages;
-        if (containsAssistantMessage(instructions)) {
+        if (graphHistoryPrepared || containsAssistantMessage(instructions)) {
             processedMessages = new ArrayList<>(instructions);
         } else if (isUserMessagePrePersisted(instructions)) {
             processedMessages = new ArrayList<>(this.chatMemory.get(conversationId));
@@ -371,11 +299,13 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
             processedMessages.addAll(instructions);
         }
 
-        for (int i = 0; i < processedMessages.size(); i++) {
-            if (processedMessages.get(i) instanceof SystemMessage) {
-                Message systemMessage = processedMessages.remove(i);
-                processedMessages.add(0, systemMessage);
-                break;
+        if (!graphHistoryPrepared) {
+            for (int i = 0; i < processedMessages.size(); i++) {
+                if (processedMessages.get(i) instanceof SystemMessage) {
+                    Message systemMessage = processedMessages.remove(i);
+                    processedMessages.add(0, systemMessage);
+                    break;
+                }
             }
         }
 
@@ -383,9 +313,10 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
                 .prompt(requestWithConversationId.prompt().mutate().messages(processedMessages).build())
                 .build();
 
-        Message userMessage = processedChatClientRequest.prompt().getLastUserOrToolResponseMessage();
-        if (userMessage != null && !isUserMessagePrePersisted(instructions)) {
-            this.chatMemory.add(conversationId, userMessage);
+        Message latestInput = processedChatClientRequest.prompt().getLastUserOrToolResponseMessage();
+        boolean prePersistedUser = latestInput instanceof UserMessage && isUserMessagePrePersisted(instructions);
+        if (latestInput != null && !prePersistedUser) {
+            this.chatMemory.add(conversationId, latestInput);
         }
 
         return processedChatClientRequest;
@@ -402,9 +333,6 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
                     .toList();
         }
         try {
-            if (isSubAgentCallRunActive(chatClientResponse.context())) {
-                return chatClientResponse;
-            }
             String conversationId = resolvePersistableConversationId(chatClientResponse.context(), null);
             if (!StringUtils.hasText(conversationId)) {
                 log.warn("ChatMemory conversationId unresolved in after(); skip persisting assistant messages");
@@ -419,7 +347,6 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
             }
         } finally {
             ACTIVE_CONVERSATION_ID.remove();
-            ACTIVE_SUB_AGENT_CALL_RUN.remove();
         }
         return chatClientResponse;
     }
@@ -466,16 +393,13 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
                 .map(request -> this.before(request, streamAdvisorChain))
                 .flatMapMany(processedRequest -> {
                     String conversationId = ACTIVE_CONVERSATION_ID.get();
-                    boolean subAgentCallRun = isSubAgentCallRunActive(processedRequest.context());
                     return streamAdvisorChain.nextStream(processedRequest)
-                            .map(response -> enrichResponseContext(response, conversationId, subAgentCallRun));
+                            .map(response -> enrichResponseContext(response, conversationId));
                 })
                 .transform(flux -> new ChatClientMessageAggregator().aggregateChatClientResponse(flux,
                         response -> this.after(response, streamAdvisorChain)))
                 .doFinally(signalType -> {
                     ACTIVE_CONVERSATION_ID.remove();
-                    ACTIVE_SUB_AGENT_CALL_RUN.remove();
-                    STREAM_SUB_AGENT_CALL_RUN.remove();
                 });
     }
 
@@ -483,9 +407,8 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
      * 将 {@link #before} 解析的会话键写入每个流式 chunk 的 context，供聚合后 {@link #after} 与 Graph 使用。
      */
     private static ChatClientResponse enrichResponseContext(ChatClientResponse response,
-                                                            String conversationId,
-                                                            boolean subAgentCallRun) {
-        if (!StringUtils.hasText(conversationId) && !subAgentCallRun) {
+                                                            String conversationId) {
+        if (!StringUtils.hasText(conversationId)) {
             return response;
         }
         var contextBuilder = new java.util.HashMap<>(response.context());
@@ -493,10 +416,6 @@ public final class ReactCompatibleMessageChatMemoryAdvisor implements BaseChatMe
         if (StringUtils.hasText(conversationId)
                 && !contextBuilder.containsKey(ChatMemory.CONVERSATION_ID)) {
             contextBuilder.put(ChatMemory.CONVERSATION_ID, conversationId);
-            changed = true;
-        }
-        if (subAgentCallRun && !isSubAgentCallRunFromContext(contextBuilder)) {
-            contextBuilder.put(META_SUB_AGENT_CALL_RUN, Boolean.TRUE);
             changed = true;
         }
         return changed ? response.mutate().context(contextBuilder).build() : response;
