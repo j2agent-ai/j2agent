@@ -36,7 +36,7 @@ public final class AgentRunnableContextKeys {
             AgentRunnableContextKeys.class.getName() + ".knowledgeCollections";
 
     /**
-     * 子智能体调用标记：为 true 时记忆 Advisor 不读写子智能体记忆表（无状态子调用，兼容旧 Orchestrator）。
+     * 子智能体委派调用标记（兼容旧 Orchestrator），不影响统一的会话记忆读写。
      */
     public static final String CONTEXT_KEY_SUB_AGENT_CALL_RUN =
             AgentRunnableContextKeys.class.getName() + ".subAgentCallRun";

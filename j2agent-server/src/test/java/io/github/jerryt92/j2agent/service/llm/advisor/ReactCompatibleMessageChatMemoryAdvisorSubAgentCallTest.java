@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClientRequest;
 import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.api.AdvisorChain;
+import org.springframework.ai.chat.client.advisor.api.StreamAdvisorChain;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -17,6 +18,9 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.content.Media;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
+import reactor.core.publisher.Flux;
+
+import java.time.Duration;
 
 import java.util.List;
 import java.util.Map;
@@ -40,113 +44,152 @@ class ReactCompatibleMessageChatMemoryAdvisorSubAgentCallTest {
     }
 
     @Test
-    void subAgentCallRunSkipsMemoryReadAndWrite() {
+    void subAgentCallRunReadsHistoryAndPersistsUser() {
         ChatMemory chatMemory = mock(ChatMemory.class);
+        when(chatMemory.get("user:ctx:rc_wiki_assistant")).thenReturn(List.of(
+                new UserMessage("previous"), new AssistantMessage("previous answer")));
+        ReactCompatibleMessageChatMemoryAdvisor advisor =
+                ReactCompatibleMessageChatMemoryAdvisor.builder(chatMemory).build();
+        UserMessage user = UserMessage.builder().text("query")
+                .metadata(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant",
+                        ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, true)).build();
+
+        ChatClientRequest processed = advisor.before(ChatClientRequest.builder()
+                .prompt(new Prompt(List.of(user))).build(), mock(AdvisorChain.class));
+
+        assertEquals(List.of("previous", "previous answer", "query"),
+                processed.prompt().getInstructions().stream().map(Message::getText).toList());
+        verify(chatMemory).get("user:ctx:rc_wiki_assistant");
+        verify(chatMemory).add("user:ctx:rc_wiki_assistant", user);
+    }
+
+    @Test
+    void subAgentCallRunPersistsToolResponseAndAssistantWithoutUserInFollowUp() {
+        ChatMemory chatMemory = mock(ChatMemory.class);
+        when(chatMemory.get("user:ctx:rc_wiki_assistant")).thenReturn(List.of());
         ReactCompatibleMessageChatMemoryAdvisor advisor =
                 ReactCompatibleMessageChatMemoryAdvisor.builder(chatMemory).build();
         AdvisorChain chain = mock(AdvisorChain.class);
+        UserMessage user = UserMessage.builder().text("query")
+                .metadata(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant",
+                        ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, true)).build();
+        advisor.before(ChatClientRequest.builder().prompt(new Prompt(List.of(user))).build(), chain);
+        AssistantMessage call = AssistantMessage.builder().content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call-1", "function", "lookup", "{}"))).build();
+        ToolResponseMessage result = ToolResponseMessage.builder()
+                .responses(List.of(new ToolResponseMessage.ToolResponse("call-1", "lookup", "ok"))).build();
 
-        UserMessage userMessage = UserMessage.builder()
-                .text("query")
-                .metadata(Map.of(
-                        ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant",
-                        ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, Boolean.TRUE))
+        advisor.before(ChatClientRequest.builder().prompt(new Prompt(List.of(call, result)))
+                .context(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant")).build(), chain);
+        AssistantMessage answer = new AssistantMessage("done");
+        advisor.after(ChatClientResponse.builder().chatResponse(new ChatResponse(List.of(new Generation(answer))))
+                .context(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant")).build(), chain);
+
+        verify(chatMemory).get("user:ctx:rc_wiki_assistant");
+        verify(chatMemory).add("user:ctx:rc_wiki_assistant", user);
+        verify(chatMemory).add("user:ctx:rc_wiki_assistant", result);
+        verify(chatMemory).add("user:ctx:rc_wiki_assistant", List.of(answer));
+    }
+
+    @Test
+    void subAgentFlagOnlyInRequestContextDoesNotDisableMemory() {
+        ChatMemory chatMemory = mock(ChatMemory.class);
+        when(chatMemory.get("user:ctx:rc_wiki_assistant")).thenReturn(List.of(new UserMessage("previous")));
+        ReactCompatibleMessageChatMemoryAdvisor advisor =
+                ReactCompatibleMessageChatMemoryAdvisor.builder(chatMemory).build();
+        UserMessage user = new UserMessage("query");
+        ChatClientRequest request = ChatClientRequest.builder().prompt(new Prompt(List.of(user)))
+                .context(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant",
+                        ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, true)).build();
+
+        ChatClientRequest processed = advisor.before(request, mock(AdvisorChain.class));
+
+        assertEquals(List.of("previous", "query"),
+                processed.prompt().getInstructions().stream().map(Message::getText).toList());
+        verify(chatMemory).get("user:ctx:rc_wiki_assistant");
+        verify(chatMemory).add("user:ctx:rc_wiki_assistant", user);
+    }
+
+    @Test
+    void legacyDelegateRunMetadataDoesNotDisableMemory() {
+        ChatMemory chatMemory = mock(ChatMemory.class);
+        when(chatMemory.get("user:ctx:rc_wiki_assistant")).thenReturn(List.of(new UserMessage("previous")));
+        ReactCompatibleMessageChatMemoryAdvisor advisor =
+                ReactCompatibleMessageChatMemoryAdvisor.builder(chatMemory).build();
+        UserMessage user = UserMessage.builder().text("query")
+                .metadata(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant",
+                        ReactCompatibleMessageChatMemoryAdvisor.META_DELEGATE_RUN, true)).build();
+
+        ChatClientRequest processed = advisor.before(ChatClientRequest.builder()
+                .prompt(new Prompt(List.of(user))).build(), mock(AdvisorChain.class));
+
+        assertEquals(List.of("previous", "query"),
+                processed.prompt().getInstructions().stream().map(Message::getText).toList());
+        verify(chatMemory).get("user:ctx:rc_wiki_assistant");
+        verify(chatMemory).add("user:ctx:rc_wiki_assistant", user);
+    }
+
+    @Test
+    void preparedGraphPreservesAllSystemMessagesWithoutReadingMemory() {
+        ChatMemory chatMemory = mock(ChatMemory.class);
+        ReactCompatibleMessageChatMemoryAdvisor advisor =
+                ReactCompatibleMessageChatMemoryAdvisor.builder(chatMemory).build();
+        UserMessage currentUser = UserMessage.builder().text("current")
+                .metadata(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:universal_assistant",
+                        ReactCompatibleMessageChatMemoryAdvisor.META_GRAPH_HISTORY_PREPARED, true,
+                        ReactCompatibleMessageChatMemoryAdvisor.META_USER_MESSAGE_PRE_PERSISTED, true))
                 .build();
-        ChatClientRequest request = ChatClientRequest.builder()
-                .prompt(new Prompt(List.of(userMessage)))
-                .build();
+        List<Message> messages = List.of(new SystemMessage("skills"), new SystemMessage("agent"), currentUser);
 
-        advisor.before(request, chain);
+        ChatClientRequest processed = advisor.before(ChatClientRequest.builder()
+                .prompt(new Prompt(messages)).build(), mock(AdvisorChain.class));
 
+        assertEquals(messages, processed.prompt().getInstructions());
         verify(chatMemory, never()).get(anyString());
         verify(chatMemory, never()).add(anyString(), any(Message.class));
         verify(chatMemory, never()).add(anyString(), any(List.class));
     }
 
     @Test
-    void subAgentCallRunSkipsMemoryOnReactFollowUpRoundWithoutUserMessage() {
+    void prePersistedUserDoesNotSkipNewToolResponse() {
         ChatMemory chatMemory = mock(ChatMemory.class);
         ReactCompatibleMessageChatMemoryAdvisor advisor =
                 ReactCompatibleMessageChatMemoryAdvisor.builder(chatMemory).build();
-        AdvisorChain chain = mock(AdvisorChain.class);
-
-        UserMessage firstRoundUser = UserMessage.builder()
-                .text("query")
-                .metadata(Map.of(
-                        ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant",
-                        ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, Boolean.TRUE))
+        UserMessage currentUser = UserMessage.builder().text("current")
+                .metadata(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:universal_assistant",
+                        ReactCompatibleMessageChatMemoryAdvisor.META_USER_MESSAGE_PRE_PERSISTED, true))
                 .build();
-        advisor.before(ChatClientRequest.builder()
-                .prompt(new Prompt(List.of(firstRoundUser)))
-                .build(), chain);
+        AssistantMessage call = AssistantMessage.builder().content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call-1", "function", "lookup", "{}"))).build();
+        ToolResponseMessage response = ToolResponseMessage.builder()
+                .responses(List.of(new ToolResponseMessage.ToolResponse("call-1", "lookup", "result"))).build();
 
-        ReactCompatibleMessageChatMemoryAdvisor.setConversationId("user:ctx:rc_wiki_assistant");
-        AssistantMessage toolCall = AssistantMessage.builder()
-                .content("")
-                .toolCalls(List.of(new AssistantMessage.ToolCall("call-1", "tool", "{}", "")))
-                .build();
-        ToolResponseMessage toolResponse = ToolResponseMessage.builder()
-                .responses(List.of(new ToolResponseMessage.ToolResponse("call-1", "tool", "ok")))
-                .build();
-        ChatClientRequest followUp = ChatClientRequest.builder()
-                .prompt(new Prompt(List.of(toolCall, toolResponse)))
-                .build();
+        advisor.before(ChatClientRequest.builder().prompt(new Prompt(List.of(currentUser, call, response))).build(),
+                mock(AdvisorChain.class));
 
-        advisor.before(followUp, chain);
-
+        verify(chatMemory).add("user:ctx:universal_assistant", response);
         verify(chatMemory, never()).get(anyString());
-        verify(chatMemory, never()).add(anyString(), any(Message.class));
-        verify(chatMemory, never()).add(anyString(), any(List.class));
-
-        ChatClientResponse response = ChatClientResponse.builder()
-                .chatResponse(new ChatResponse(List.of(new Generation(new AssistantMessage("done")))))
-                .build();
-        advisor.after(response, chain);
-
-        verify(chatMemory, never()).add(anyString(), any(List.class));
     }
 
     @Test
-    void subAgentCallRunSkipsMemoryWhenFlagOnlyInRequestContext() {
+    void historicalPrePersistedFlagDoesNotSkipCurrentUserPersistence() {
         ChatMemory chatMemory = mock(ChatMemory.class);
         ReactCompatibleMessageChatMemoryAdvisor advisor =
                 ReactCompatibleMessageChatMemoryAdvisor.builder(chatMemory).build();
-        AdvisorChain chain = mock(AdvisorChain.class);
-
-        ReactCompatibleMessageChatMemoryAdvisor.setConversationId("user:ctx:rc_wiki_assistant");
-        ChatClientRequest request = ChatClientRequest.builder()
-                .prompt(new Prompt(List.of(new AssistantMessage("tool round"))))
-                .context(Map.of(ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, Boolean.TRUE))
+        UserMessage previousUser = UserMessage.builder().text("previous")
+                .metadata(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:universal_assistant",
+                        ReactCompatibleMessageChatMemoryAdvisor.META_USER_MESSAGE_PRE_PERSISTED, true))
+                .build();
+        UserMessage currentUser = UserMessage.builder().text("current")
+                .metadata(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:universal_assistant",
+                        ReactCompatibleMessageChatMemoryAdvisor.META_GRAPH_HISTORY_PREPARED, true))
                 .build();
 
-        advisor.before(request, chain);
+        advisor.before(ChatClientRequest.builder().prompt(new Prompt(List.of(previousUser,
+                new AssistantMessage("previous answer"), currentUser))).build(), mock(AdvisorChain.class));
 
+        verify(chatMemory).add("user:ctx:universal_assistant", currentUser);
         verify(chatMemory, never()).get(anyString());
-        verify(chatMemory, never()).add(anyString(), any(Message.class));
-    }
-
-    @Test
-    void legacyDelegateRunMetadataStillSkipsMemoryReadAndWrite() {
-        ChatMemory chatMemory = mock(ChatMemory.class);
-        ReactCompatibleMessageChatMemoryAdvisor advisor =
-                ReactCompatibleMessageChatMemoryAdvisor.builder(chatMemory).build();
-        AdvisorChain chain = mock(AdvisorChain.class);
-
-        UserMessage userMessage = UserMessage.builder()
-                .text("query")
-                .metadata(Map.of(
-                        ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant",
-                        ReactCompatibleMessageChatMemoryAdvisor.META_DELEGATE_RUN, Boolean.TRUE))
-                .build();
-        ChatClientRequest request = ChatClientRequest.builder()
-                .prompt(new Prompt(List.of(userMessage)))
-                .build();
-
-        advisor.before(request, chain);
-
-        verify(chatMemory, never()).get(anyString());
-        verify(chatMemory, never()).add(anyString(), any(Message.class));
-        verify(chatMemory, never()).add(anyString(), any(List.class));
     }
 
     @Test
@@ -266,52 +309,43 @@ class ReactCompatibleMessageChatMemoryAdvisorSubAgentCallTest {
     }
 
     @Test
-    void subAgentCallRunAfterSkipsPersistWhenFlagInResponseContextOnly() {
+    void subAgentFlagOnlyInResponseContextDoesNotSkipAssistantPersistence() {
         ChatMemory chatMemory = mock(ChatMemory.class);
         ReactCompatibleMessageChatMemoryAdvisor advisor =
                 ReactCompatibleMessageChatMemoryAdvisor.builder(chatMemory).build();
-        AdvisorChain chain = mock(AdvisorChain.class);
-
-        ReactCompatibleMessageChatMemoryAdvisor.setConversationId("user:ctx:rc_wiki_assistant");
+        AssistantMessage answer = new AssistantMessage("answer");
         ChatClientResponse response = ChatClientResponse.builder()
-                .chatResponse(new ChatResponse(List.of(new Generation(new AssistantMessage("answer")))))
-                .context(Map.of(ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, Boolean.TRUE))
-                .build();
+                .chatResponse(new ChatResponse(List.of(new Generation(answer))))
+                .context(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant",
+                        ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, true)).build();
 
-        advisor.after(response, chain);
+        advisor.after(response, mock(AdvisorChain.class));
 
-        verify(chatMemory, never()).add(anyString(), any(Message.class));
-        verify(chatMemory, never()).add(anyString(), any(List.class));
+        verify(chatMemory).add("user:ctx:rc_wiki_assistant", List.of(answer));
     }
 
     @Test
-    void subAgentCallRunBeforePutsFlagInRequestContextForStreamAfter() {
+    void delegatedStreamPersistsResponseUsingConversationContext() {
         ChatMemory chatMemory = mock(ChatMemory.class);
+        when(chatMemory.get("user:ctx:rc_wiki_assistant")).thenReturn(List.of());
         ReactCompatibleMessageChatMemoryAdvisor advisor =
                 ReactCompatibleMessageChatMemoryAdvisor.builder(chatMemory).build();
-        AdvisorChain chain = mock(AdvisorChain.class);
+        StreamAdvisorChain chain = mock(StreamAdvisorChain.class);
+        UserMessage user = UserMessage.builder().text("query")
+                .metadata(Map.of(ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant",
+                        ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, true)).build();
+        AssistantMessage answer = new AssistantMessage("answer");
+        when(chain.nextStream(any(ChatClientRequest.class))).thenReturn(Flux.just(ChatClientResponse.builder()
+                .chatResponse(new ChatResponse(List.of(new Generation(answer)))).build()));
 
-        UserMessage userMessage = UserMessage.builder()
-                .text("query")
-                .metadata(Map.of(
-                        ChatMemory.CONVERSATION_ID, "user:ctx:rc_wiki_assistant",
-                        ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, Boolean.TRUE))
-                .build();
-        ChatClientRequest request = ChatClientRequest.builder()
-                .prompt(new Prompt(List.of(userMessage)))
-                .build();
+        List<ChatClientResponse> responses = advisor.adviseStream(ChatClientRequest.builder()
+                .prompt(new Prompt(List.of(user))).build(), chain).collectList().block(Duration.ofSeconds(5));
 
-        ChatClientRequest processed = advisor.before(request, chain);
-
-        ReactCompatibleMessageChatMemoryAdvisor.setConversationId("user:ctx:rc_wiki_assistant");
-        ChatClientResponse response = ChatClientResponse.builder()
-                .chatResponse(new ChatResponse(List.of(new Generation(new AssistantMessage("answer")))))
-                .context(processed.context())
-                .build();
-
-        advisor.after(response, chain);
-
-        verify(chatMemory, never()).add(anyString(), any(Message.class));
-        verify(chatMemory, never()).add(anyString(), any(List.class));
+        assertEquals("user:ctx:rc_wiki_assistant", responses.getFirst().context().get(ChatMemory.CONVERSATION_ID));
+        verify(chatMemory).get("user:ctx:rc_wiki_assistant");
+        verify(chatMemory).add("user:ctx:rc_wiki_assistant", user);
+        verify(chatMemory).add("user:ctx:rc_wiki_assistant", List.of(answer));
     }
+
+
 }

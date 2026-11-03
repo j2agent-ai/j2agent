@@ -304,8 +304,8 @@ public abstract class AiAgent {
     }
 
     /**
-     * 以流式方式执行单轮 Agent 调用；会话历史由 ChatClient 上的记忆 Advisor 维护，
-     * {@link ChatMemory#CONVERSATION_ID} 放在首条 {@link UserMessage} 的 metadata 中以便跨线程解析。
+     * 以流式方式执行单轮 Agent 调用；订阅时将窗口历史放入 graph，工具循环沿用完整上下文，
+     * 记忆 Advisor 仅追加本轮新增消息。会话键放在当前 {@link UserMessage} 的 metadata 中以便跨线程解析。
      */
     public Flux<NodeOutput> stream(AgentRunContext context) throws GraphRunnerException {
         if (agent == null) {
@@ -349,6 +349,7 @@ public abstract class AiAgent {
         if (context.subAgentCallRun()) {
             metadata.put(ReactCompatibleMessageChatMemoryAdvisor.META_SUB_AGENT_CALL_RUN, Boolean.TRUE);
         }
+        metadata.put(ReactCompatibleMessageChatMemoryAdvisor.META_GRAPH_HISTORY_PREPARED, Boolean.TRUE);
         if (context.userMessagePrePersisted()) {
             metadata.put(ReactCompatibleMessageChatMemoryAdvisor.META_USER_MESSAGE_PRE_PERSISTED, Boolean.TRUE);
         }
@@ -374,7 +375,15 @@ public abstract class AiAgent {
                 if (StringUtils.hasText(runtimeSystemPrompt)) {
                     messages.add(new SystemMessage(runtimeSystemPrompt));
                 }
-                messages.add(userMessage);
+                List<Message> history = new ArrayList<>(chatMemory.get(context.conversationId()));
+                // 只替换预落库的末尾 user，不按文本去重，也不覆盖更早回合的 user。
+                if (context.userMessagePrePersisted() && !history.isEmpty()
+                        && history.getLast() instanceof UserMessage) {
+                    history.set(history.size() - 1, userMessage);
+                } else {
+                    history.add(userMessage);
+                }
+                messages.addAll(history);
                 return agent.stream(messages, runnableConfig)
                         .doFinally(signalType -> {
                             io.github.jerryt92.j2agent.service.security.AgentAccessContext.clear(context.conversationId());

@@ -56,7 +56,7 @@ class UniversalSubAgentCallServiceTest {
     }
 
     @Test
-    void callUsesSpecialistConversationIdAndStatelessMemory() {
+    void callUsesSpecialistConversationIdAndDelegationMarker() {
         AiAgent wikiAgent = Mockito.mock(AiAgent.class);
         when(wikiAgent.getAgentId()).thenReturn("inc_wiki");
         when(agentRouter.listCallableSubAgents()).thenReturn(List.of(wikiAgent));
